@@ -221,6 +221,7 @@ npx @binxgodteli/claude-ship push --org my-org --private --no-readme
 | `--api-key <key>` | API key for the selected provider |
 | `--detail <level>` | README detail level: `short`, `normal`, `large`, `carefully` |
 | `--max-tokens <n>` | Max output tokens for README generation. `0` = no limit |
+| `--message <msg>` | Git commit message (default: `🚀 Update via claude-ship`) |
 
 ---
 
