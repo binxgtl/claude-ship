@@ -173,6 +173,7 @@ npx @binxgodteli/claude-ship ship --file ./claude-output.txt --provider gemini -
 | `--org <org>` | GitHub organization to create the repo under |
 | `--branch <name>` | Git branch name (default: `main`) |
 | `--detail <level>` | README detail level: `short`, `normal`, `large`, `carefully` |
+| `--style <style>` | README tone: `practical` (code-first, terse), `balanced` (default), `marketing` (narrative) |
 | `--max-tokens <n>` | Max output tokens for README generation. `0` = no limit |
 | `-d, --dry-run` | Preview what would be created — no writes, no API calls |
 
@@ -221,6 +222,7 @@ npx @binxgodteli/claude-ship push --org my-org --private --no-readme
 | `--api-key <key>` | API key for the selected provider |
 | `--detail <level>` | README detail level: `short`, `normal`, `large`, `carefully` |
 | `--max-tokens <n>` | Max output tokens for README generation. `0` = no limit |
+| `--style <style>` | README tone: `practical` (code-first, terse), `balanced` (default), `marketing` (narrative) |
 | `--message <msg>` | Git commit message (default: `🚀 Update via claude-ship`) |
 
 ---
@@ -248,6 +250,7 @@ npx @binxgodteli/claude-ship readme --dir ../my-existing-project --provider gemi
 | `--provider <name>` | AI provider: `"anthropic"` (default) or `"gemini"` |
 | `--api-key <key>` | API key for the selected AI provider |
 | `--detail <level>` | README detail level: `short`, `normal`, `large`, `carefully` |
+| `--style <style>` | README tone: `practical` (code-first, terse), `balanced` (default), `marketing` (narrative) |
 | `--max-tokens <n>` | Max output tokens for README generation. `0` = no limit |
 | `--license <type>` | Specify project license type (e.g., MIT, Apache-2.0) |
 | `--author <name>` | Author name for copyright line |

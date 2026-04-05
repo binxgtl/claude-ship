@@ -1,4 +1,4 @@
-import { TechStack, Provider, ReadmeDetail, LicenseType, ReadmeSections } from "./types.js";
+import { TechStack, Provider, ReadmeDetail, ReadmeStyle, LicenseType, ReadmeSections } from "./types.js";
 import { renderBadges } from "./detector.js";
 import { generateText, providerLabel } from "./providers.js";
 import { ReadmeContext } from "./scaffold.js";
@@ -22,6 +22,8 @@ export interface ReadmeOptions {
   githubUsername?: string;
   /** Override max output tokens. 0 = use provider maximum (no artificial limit). */
   maxTokens?: number;
+  /** Tone/format style. practical = code-first terse; balanced = default; marketing = narrative */
+  style?: ReadmeStyle;
   provider: Provider;
   apiKey: string;
 }
@@ -31,6 +33,97 @@ export interface ReadmeOptions {
 const SCREENSHOT_PLACEHOLDER = `<!-- Add a screenshot or GIF demo here
      Tip: record with vhs (https://github.com/charmbracelet/vhs) or licecap
      ![Demo](./docs/demo.gif) -->`;
+
+// ─── Style instruction ───────────────────────────────────────────────────────
+
+function styleInstruction(style: ReadmeStyle | undefined): string {
+  switch (style) {
+    case "practical":
+      return `STYLE: practical — terse, code-first. Lead every section with a command or code example, not prose. One sentence max per explanation. No marketing copy, no adjectives like "powerful/seamless/robust". Every sentence must state a fact or show a command.`;
+    case "marketing":
+      return `STYLE: marketing — engaging narrative. Lead with benefits and developer experience. Use vivid language to explain value. Keep it accurate but sell the project.`;
+    default:
+      return `STYLE: balanced — professional docs tone. Mix brief explanations with code examples. Factual, no hype.`;
+  }
+}
+
+// ─── Output sanitizer & quality gate ─────────────────────────────────────────
+
+// Matches <placeholder> patterns but not HTML comments (<!-- ... -->)
+const LEAKED_PLACEHOLDER_RE = /<(?!(?:!--|\/?\w+(?:\s[^>]*)?>))[^>]{1,80}>/g;
+
+const HEDGE_RE = /\b(possibly|potentially|likely|probably|might be|may be|could be)\b/gi;
+
+const GENERIC_MARKETING_RE =
+  /\b(powerful|seamless|robust|comprehensive|cutting-edge|state-of-the-art|user-friendly|easy to use|highly optimized)\b/gi;
+
+interface SanitizeResult {
+  text: string;
+  /** 0–100. Lower = more issues detected. */
+  score: number;
+  issues: string[];
+}
+
+function sanitizeOutput(text: string, ctx: ReadmeContext): SanitizeResult {
+  const issues: string[] = [];
+  let clean = text;
+
+  // 1. Strip leaked <placeholder> tokens (real ones, not HTML comments or tags)
+  const leaks = [...text.matchAll(LEAKED_PLACEHOLDER_RE)].map((m) => m[0]);
+  if (leaks.length > 0) {
+    // Only remove lines that are *only* a placeholder (avoids breaking inline HTML)
+    clean = clean
+      .split("\n")
+      .map((line) => (LEAKED_PLACEHOLDER_RE.test(line.trim()) ? "" : line))
+      .join("\n");
+    // Reset lastIndex after global test
+    LEAKED_PLACEHOLDER_RE.lastIndex = 0;
+    clean = clean.replace(/\n{3,}/g, "\n\n");
+    issues.push(`${leaks.length} placeholder line(s) stripped: ${leaks.slice(0, 3).join(", ")}`);
+  }
+
+  // 2. Count hedging phrases (penalise score; don't remove — may be in code examples)
+  const hedgeMatches = text.match(HEDGE_RE) ?? [];
+  if (hedgeMatches.length > 0) {
+    issues.push(`${hedgeMatches.length} hedging phrase(s): ${[...new Set(hedgeMatches)].join(", ")}`);
+  }
+
+  // 3. Count generic marketing words
+  const genericMatches = text.match(GENERIC_MARKETING_RE) ?? [];
+  if (genericMatches.length > 2) {
+    issues.push(`${genericMatches.length} generic marketing words`);
+  }
+
+  // 4. Check for hallucinated env var names (ALL_CAPS ending in _KEY/_TOKEN/_SECRET/_URL
+  //    that are not in the known envVars list)
+  if (ctx.envVars.length > 0) {
+    const envRe = /\b([A-Z][A-Z0-9_]{3,}(?:_KEY|_TOKEN|_SECRET|_URL))\b/g;
+    const mentioned = new Set([...text.matchAll(envRe)].map((m) => m[1]!));
+    const known = new Set(ctx.envVars);
+    const hallucinated = [...mentioned].filter((v) => !known.has(v));
+    if (hallucinated.length > 0) {
+      issues.push(`Possible hallucinated env vars: ${hallucinated.join(", ")}`);
+    }
+  }
+
+  const score = Math.max(
+    0,
+    100 -
+      leaks.length * 15 -
+      Math.min(hedgeMatches.length * 4, 20) -
+      Math.min(genericMatches.length * 3, 15)
+  );
+
+  return { text: clean.trim(), score, issues };
+}
+
+function stricterPromptSuffix(): string {
+  return `\n\n## REGEN — previous attempt had quality issues. STRICT mode:
+- Remove ALL <placeholder> tokens. If you don't know a value, omit the row/bullet entirely.
+- No hedging: remove "possibly", "likely", "potentially", "might be", "may be".
+- No generic adjectives: "powerful", "seamless", "robust", "comprehensive", "cutting-edge".
+- Every command must be real and runnable. Every env var must be from the list above.`;
+}
 
 // ─── English prompt ───────────────────────────────────────────────────────────
 
@@ -44,9 +137,12 @@ function buildEnglishPrompt(opts: ReadmeOptions): string {
   const structure = buildStructureSpec(detail, opts, false);
   const maxTokenHint = detail === "short" ? 1200 : detail === "normal" ? 2000 : detail === "large" ? 4000 : 7000;
 
+  const styleLine = styleInstruction(opts.style);
+
   return `You are a senior software engineer writing a production-quality GitHub README.md.
 Your goal: make developers immediately understand this project and want to use it.
 Detail level: ${detail.toUpperCase()} — target output ~${maxTokenHint} tokens.
+${styleLine}
 
 ## CRITICAL RULES — violating any of these is a failure
 1. Use proper Markdown heading syntax with # symbols. NEVER omit them.
@@ -89,10 +185,13 @@ function buildVietnamesePrompt(opts: ReadmeOptions): string {
   const structure = buildStructureSpec(detail, opts, true);
   const maxTokenHint = detail === "short" ? 1200 : detail === "normal" ? 2000 : detail === "large" ? 4000 : 7000;
 
+  const styleLine = styleInstruction(opts.style);
+
   return `You are a senior software engineer writing a production-quality GitHub README.md IN VIETNAMESE.
 The README must be written entirely in Vietnamese — this is a hard requirement.
 Audience: Vietnamese developers on Viblo, GitHub, TopDev.
 Detail level: ${detail.toUpperCase()} — target output ~${maxTokenHint} tokens.
+${styleLine}
 
 ## CRITICAL RULES — violating any of these is a failure
 1. Use proper Markdown heading syntax with # symbols. NEVER omit them.
@@ -908,13 +1007,17 @@ function starHistoryBlock(username: string, repoName: string): string {
 
 export async function generateReadme(opts: ReadmeOptions): Promise<string> {
   const isNewLang = opts.stack.isNewLanguage;
-  const prompt = isNewLang
-    ? opts.vietnamese
-      ? buildNewLanguageVietnamesePrompt(opts)
-      : buildNewLanguageEnglishPrompt(opts)
-    : opts.vietnamese
-      ? buildVietnamesePrompt(opts)
-      : buildEnglishPrompt(opts);
+
+  function buildPrompt(suffix = ""): string {
+    const base = isNewLang
+      ? opts.vietnamese
+        ? buildNewLanguageVietnamesePrompt(opts)
+        : buildNewLanguageEnglishPrompt(opts)
+      : opts.vietnamese
+        ? buildVietnamesePrompt(opts)
+        : buildEnglishPrompt(opts);
+    return base + suffix;
+  }
 
   const detail = opts.detail ?? "normal";
   const defaultTokens =
@@ -924,16 +1027,27 @@ export async function generateReadme(opts: ReadmeOptions): Promise<string> {
   // 0 means "no artificial limit" — provider will use its own maximum
   const maxTokens = opts.maxTokens === 0 ? 32000 : (opts.maxTokens ?? defaultTokens);
 
-  const text = await generateText({
-    provider: opts.provider,
-    apiKey: opts.apiKey,
-    prompt,
-    maxTokens,
-  });
+  async function generate(prompt: string): Promise<string> {
+    const text = await generateText({ provider: opts.provider, apiKey: opts.apiKey, prompt, maxTokens });
+    let result = text.trim();
+    // Strip "name" from any subcommand enumeration — .name() sets program name, not a command
+    result = result.replace(/,\s*(?:and\s+)?`name`/g, "").replace(/`name`(?:,\s*)/g, "");
+    return result;
+  }
 
-  let result = text.trim();
-  // Strip "name" from any subcommand enumeration — .name() sets program name, not a command
-  result = result.replace(/,\s*(?:and\s+)?`name`/g, "").replace(/`name`(?:,\s*)/g, "");
+  let result = await generate(buildPrompt());
+  const { text, score } = sanitizeOutput(result, opts.context);
+  result = text;
+
+  // Quality gate: regen once if score is too low
+  if (score < 60) {
+    const retry = await generate(buildPrompt(stricterPromptSuffix()));
+    const retryClean = sanitizeOutput(retry, opts.context);
+    if (retryClean.score >= score) {
+      result = retryClean.text;
+    }
+  }
+
   if (opts.sections?.starHistory && opts.githubUsername) {
     result = injectBeforeLicense(result, starHistoryBlock(opts.githubUsername, opts.projectName));
   }

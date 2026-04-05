@@ -48,7 +48,7 @@ import {
   readMultilineInput,
   c,
 } from "./ui.js";
-import type { Provider, ReadmeDetail } from "./types.js";
+import type { Provider, ReadmeDetail, ReadmeStyle } from "./types.js";
 
 // ─── CLI definition ───────────────────────────────────────────────────────────
 
@@ -85,6 +85,10 @@ export function createCLI(): Command {
       'README detail level: "short", "normal" (default), "large", "carefully"'
     )
     .option(
+      "--style <style>",
+      'README tone: "practical" (code-first, terse), "balanced" (default), "marketing" (narrative)'
+    )
+    .option(
       "--max-tokens <n>",
       "Max output tokens for README generation. 0 = no limit (provider maximum). Default varies by --detail level."
     )
@@ -113,6 +117,10 @@ export function createCLI(): Command {
     .option(
       "--detail <level>",
       'README detail level: "short", "normal", "large", "carefully"'
+    )
+    .option(
+      "--style <style>",
+      'README tone: "practical" (code-first, terse), "balanced" (default), "marketing" (narrative)'
     )
     .option(
       "--max-tokens <n>",
@@ -148,6 +156,10 @@ export function createCLI(): Command {
     .option(
       "--detail <level>",
       'README detail level: "short", "normal" (default), "large", "carefully"'
+    )
+    .option(
+      "--style <style>",
+      'README tone: "practical" (code-first, terse), "balanced" (default), "marketing" (narrative)'
     )
     .option(
       "--max-tokens <n>",
@@ -220,6 +232,12 @@ function resolveDetail(flag?: string): ReadmeDetail {
   throw new Error(`Unknown detail level "${raw}". Use: short, normal, large, carefully.`);
 }
 
+function resolveStyle(flag?: string): ReadmeStyle | undefined {
+  if (!flag) return loadConfig().defaultReadmeStyle;
+  if (flag === "practical" || flag === "balanced" || flag === "marketing") return flag;
+  throw new Error(`Unknown style "${flag}". Use: practical, balanced, marketing.`);
+}
+
 /**
  * Resolve an API key for the given provider.
  * Priority: --api-key flag → env var → saved config → interactive first-run prompt.
@@ -283,6 +301,7 @@ interface ShipOptions {
   branch?: string;
   detail?: string;
   maxTokens?: string;
+  style?: string;
   dryRun: boolean;
 }
 
@@ -490,6 +509,7 @@ async function runShip(opts: ShipOptions) {
         context: readmeContext,
         vietnamese: isVi,
         detail,
+        style: resolveStyle(opts.style),
         license: shipCfg.defaultLicense,
         author: shipCfg.projectAuthor ?? (earlyUsername || shipCfg.githubUsername),
         sections: shipCfg.readmeSections,
@@ -631,6 +651,7 @@ interface ReadmeRunOptions {
   apiKey?: string;
   detail?: string;
   maxTokens?: string;
+  style?: string;
 }
 
 async function runReadme(opts: ReadmeRunOptions) {
@@ -643,8 +664,8 @@ async function runReadme(opts: ReadmeRunOptions) {
   if (!apiKey) {
     throw new Error(
       `API key required for README generation.\n` +
-        `Set ${providerEnvVar(provider)} or run:\n` +
-        `  claude-ship config --set-${provider} <key>`
+        `Set the ${providerEnvVar(provider)} environment variable, or run:\n` +
+        `  claude-ship config`
     );
   }
 
@@ -687,6 +708,7 @@ async function runReadme(opts: ReadmeRunOptions) {
     context,
     vietnamese: isVi,
     detail,
+    style: resolveStyle(opts.style),
     license: readmeCfg.defaultLicense,
     author: readmeCfg.projectAuthor ?? readmeCfg.githubUsername,
     sections: readmeCfg.readmeSections,
@@ -720,6 +742,7 @@ interface PushOptions {
   apiKey?: string;
   detail?: string;
   maxTokens?: string;
+  style?: string;
   message?: string;
 }
 
@@ -776,6 +799,7 @@ async function runPush(opts: PushOptions) {
           context,
           vietnamese: isVi,
           detail,
+          style: resolveStyle(opts.style),
           license: cfg.defaultLicense,
           author: cfg.projectAuthor ?? cfg.githubUsername,
           sections: cfg.readmeSections,

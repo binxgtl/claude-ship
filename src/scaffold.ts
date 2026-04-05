@@ -760,8 +760,10 @@ export function writeLicenseFile(
   year = new Date().getFullYear()
 ): void {
   if (!license) return;
+  const dest = path.join(outputDir, "LICENSE");
+  if (fs.existsSync(dest)) return;
   const text = generateLicenseFile(license, author || "Contributors", year);
-  fs.writeFileSync(path.join(outputDir, "LICENSE"), text, "utf8");
+  fs.writeFileSync(dest, text, "utf8");
 }
 
 /**

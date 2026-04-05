@@ -147,6 +147,11 @@ function isValidPath(candidate: string): boolean {
   const s = candidate.trim();
   if (!s || s.length > 250) return false;
 
+  // Reject absolute paths and traversal segments before any other check
+  const normalized = s.replace(/\\/g, "/");
+  if (normalized.startsWith("/")) return false;
+  if (normalized.split("/").some((seg) => seg === "..")) return false;
+
   // Must end with a known extension OR be an extensionless config file
   const hasExtension = /\.[a-zA-Z0-9]{1,12}$/.test(s);
   if (!hasExtension && !EXTENSIONLESS_FILES.has(s.split("/").pop() ?? "")) return false;
@@ -156,8 +161,7 @@ function isValidPath(candidate: string): boolean {
     if (re.test(s)) return false;
   }
 
-  // Must only contain path-safe characters (allow spaces for Windows paths only
-  // in the leading directory segments — reject mid-name spaces in the filename)
+  // Must only contain path-safe characters
   if (!/^[a-zA-Z0-9._\-/\\@~+:]+$/.test(s)) return false;
 
   // Reject paths that look like URLs
@@ -167,13 +171,12 @@ function isValidPath(candidate: string): boolean {
 }
 
 function normalizePath(filePath: string): string {
-  const cleaned = filePath
+  return filePath
     .trim()
     .replace(/\\/g, "/")
-    .replace(/\s+/g, "-");
-  // Drop empty, current-dir, and parent-dir segments to prevent path traversal
-  const parts = cleaned.split("/").filter((p) => p !== "" && p !== "." && p !== "..");
-  return parts.join("/");
+    .replace(/\s+/g, "-")
+    .replace(/^\/+/, "")   // strip any leading slash
+    .replace(/\/+/g, "/"); // collapse double slashes
 }
 
 function inferLanguageFromPath(filePath: string): string {

@@ -44,6 +44,8 @@ export type Provider = "anthropic" | "gemini";
 
 export type ReadmeDetail = "short" | "normal" | "large" | "carefully";
 
+export type ReadmeStyle = "practical" | "balanced" | "marketing";
+
 export type LicenseType =
   | "MIT"
   | "Apache-2.0"
@@ -109,6 +111,8 @@ export interface AppConfig {
   readmeSections?: ReadmeSections;
   /** Always generate Vietnamese README without needing --vi flag */
   defaultVi?: boolean;
+  /** Default README style: practical | balanced (default) | marketing */
+  defaultReadmeStyle?: ReadmeStyle;
   /** Max tokens for README generation. 0 = use provider maximum. Default per detail level. */
   maxReadmeTokens?: number;
 }
