@@ -1,0 +1,62 @@
+{
+  "name": "@binxgodteli/claude-ship",
+  "version": "1.0.0",
+  "description": "Ship Claude-generated projects to GitHub in seconds — parse, scaffold, and publish with one command.",
+  "keywords": [
+    "claude",
+    "anthropic",
+    "ai",
+    "cli",
+    "github",
+    "scaffolding",
+    "ship"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/binxgtl/claude-ship.git"
+  },
+  "homepage": "https://github.com/binxgtl/claude-ship#readme",
+  "bugs": {
+    "url": "https://github.com/binxgtl/claude-ship/issues"
+  },
+  "type": "module",
+  "bin": {
+    "claude-ship": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "prepublishOnly": "npm run lint && npm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/genai": "^1.48.0",
+    "@octokit/rest": "^21.0.2",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "inquirer": "^10.2.2",
+    "ora": "^8.1.1",
+    "simple-git": "^3.27.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.14.0",
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^22.9.1",
+    "eslint": "^9.14.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.14.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
