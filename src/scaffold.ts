@@ -5,9 +5,13 @@ import { ParsedFile, LicenseType } from "./types.js";
 // ─── Write helpers ────────────────────────────────────────────────────────────
 
 export function writeFiles(outputDir: string, files: ParsedFile[]): void {
-  fs.mkdirSync(outputDir, { recursive: true });
+  const resolvedBase = path.resolve(outputDir);
+  fs.mkdirSync(resolvedBase, { recursive: true });
   for (const file of files) {
-    const fullPath = path.join(outputDir, normalizeFsPath(file.path));
+    const fullPath = path.resolve(resolvedBase, normalizeFsPath(file.path));
+    if (!fullPath.startsWith(resolvedBase + path.sep)) {
+      throw new Error(`Unsafe path rejected: "${file.path}"`);
+    }
     fs.mkdirSync(path.dirname(fullPath), { recursive: true });
     fs.writeFileSync(fullPath, file.content, "utf8");
   }

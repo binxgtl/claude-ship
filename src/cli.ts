@@ -153,6 +153,7 @@ export function createCLI(): Command {
       "--max-tokens <n>",
       "Max output tokens for README generation. 0 = no limit."
     )
+    .option("--message <msg>", "Git commit message (default: '🚀 Update via claude-ship')")
     .action(async (opts) => {
       try {
         await runPush(opts);
@@ -335,7 +336,7 @@ async function runShip(opts: ShipOptions) {
       type: "input",
       name: "projectName",
       message: "Project name (GitHub repo name):",
-      when: !opts.name,
+      when: !opts.name && !opts.dryRun,
       validate: (v: string) =>
         /^[a-zA-Z0-9_.-]+$/.test(v.trim()) ||
         "Only letters, numbers, hyphens, dots, or underscores",
@@ -345,7 +346,7 @@ async function runShip(opts: ShipOptions) {
       name: "description",
       message: "Short description:",
       default: "Built with Claude + claude-ship",
-      when: !opts.desc,
+      when: !opts.desc && !opts.dryRun,
     },
     {
       type: "confirm",
@@ -363,7 +364,7 @@ async function runShip(opts: ShipOptions) {
     },
   ]);
 
-  const projectName = (opts.name ?? answers.projectName ?? "").trim();
+  const projectName = (opts.name ?? answers.projectName ?? (opts.dryRun ? "my-project" : "")).trim();
   const description = (opts.desc ?? answers.description ?? "Built with claude-ship").trim();
   const isPrivate: boolean = opts.private || answers.isPrivate || false;
   const outputDir = opts.out ?? resolveOutputDir(projectName);
@@ -522,7 +523,7 @@ async function runShip(opts: ShipOptions) {
     if (!apiKey && opts.readme) {
       printInfo(
         "No API key — using built-in README template. " +
-          "Run `claude-ship config --set-anthropic <key>` to enable AI generation."
+          "Run `claude-ship config` to save an API key and enable AI generation."
       );
     }
   }
@@ -719,6 +720,7 @@ interface PushOptions {
   apiKey?: string;
   detail?: string;
   maxTokens?: string;
+  message?: string;
 }
 
 async function runPush(opts: PushOptions) {
@@ -811,8 +813,9 @@ async function runPush(opts: PushOptions) {
   const allFiles = getAllFilePaths(dir);
   const gitFiles = filterFilesForGit(allFiles, cfg.gitIncludePatterns, cfg.gitExcludePatterns);
 
+  const commitMessage = opts.message?.trim() || "🚀 Update via claude-ship";
   const spinCommit = spinner("Committing local changes…");
-  await initAndCommit(dir, gitFiles, "🚀 Update via claude-ship");
+  await initAndCommit(dir, gitFiles, commitMessage);
   spinCommit.succeed(`Committed ${gitFiles.length} files`);
 
   // Create or reuse GitHub repo

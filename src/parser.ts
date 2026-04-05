@@ -167,12 +167,13 @@ function isValidPath(candidate: string): boolean {
 }
 
 function normalizePath(filePath: string): string {
-  return filePath
+  const cleaned = filePath
     .trim()
-    .replace(/\\/g, "/")   // Windows → POSIX
-    .replace(/^\//, "")    // no leading slash
-    .replace(/\/\//g, "/") // collapse double slashes
-    .replace(/\s+/g, "-"); // spaces → hyphens (safety for Windows names)
+    .replace(/\\/g, "/")
+    .replace(/\s+/g, "-");
+  // Drop empty, current-dir, and parent-dir segments to prevent path traversal
+  const parts = cleaned.split("/").filter((p) => p !== "" && p !== "." && p !== "..");
+  return parts.join("/");
 }
 
 function inferLanguageFromPath(filePath: string): string {
