@@ -43,4 +43,11 @@ describe("writeLicenseFile — no overwrite", () => {
     writeLicenseFile(tmpDir, "MIT", "Test Author");
     expect(fs.readFileSync(dest, "utf8")).toBe("CUSTOM LICENSE");
   });
+
+  it("does not create LICENSE when LICENSE.txt already exists", () => {
+    tmpDir = makeTmpDir();
+    fs.writeFileSync(path.join(tmpDir, "LICENSE.txt"), "CUSTOM LICENSE", "utf8");
+    writeLicenseFile(tmpDir, "MIT", "Test Author");
+    expect(fs.existsSync(path.join(tmpDir, "LICENSE"))).toBe(false);
+  });
 });

@@ -23,6 +23,12 @@ npx @binxgodteli/claude-ship push --no-readme
 
 # Regenerate your README with AI
 npx @binxgodteli/claude-ship readme --provider gemini --api-key YOUR_KEY
+
+# Scaffold a new project from a template (no Claude needed)
+npx @binxgodteli/claude-ship init
+
+# Generate CHANGELOG from git history
+npx @binxgodteli/claude-ship changelog
 ```
 
 No setup required. `claude-ship` detects your GitHub token from the `gh` CLI, `GITHUB_TOKEN`, or a saved config automatically.
@@ -46,9 +52,14 @@ claude-ship --help
 
 - **Parse Claude output** — extracts files from fenced code blocks and `<antArtifact>` tags
 - **Auto-scaffold** — writes files, generates `.gitignore` presets based on detected tech stack
-- **AI README generation** — uses Anthropic Claude or Google Gemini; 4 detail levels, 3 tones, Vietnamese support
+- **AI README generation** — uses Anthropic Claude or Google Gemini; 4 detail levels, 3 tones, Vietnamese support; streaming output, AI self-evaluation with quality scoring, multi-provider fallback, and custom section preservation on regenerate
 - **GitHub integration** — creates repos (personal or org, public or private) via Octokit; handles force-push flow
 - **Push existing projects** — no Claude output needed; creates repo if it doesn't exist
+- **Project templates** — `init` command bootstraps new projects from 6 stack templates (Node.js, React, Next.js, Express, FastAPI, CLI Tool)
+- **AI changelog** — `changelog` command generates CHANGELOG.md from git history using AI
+- **GitHub Actions CI** — auto-generate `.github/workflows/ci.yml` via `--ci` flag (Node.js, Python, Rust, Go)
+- **Monorepo support** — detects npm/pnpm/yarn workspaces and includes package info in generated READMEs
+- **Preview & diff** — `readme --preview` to review before writing; `push --diff` to see changes summary before pushing
 - **Dry-run mode** — preview all actions without writing files or calling APIs
 - **Encrypted config** — API keys and tokens stored with AES-256-CBC at `~/.claudeship/config.json`
 - **SSH/HTTPS remotes** — configurable per project or globally
@@ -64,8 +75,8 @@ Parse a Claude response, scaffold a project directory, and push to a new GitHub 
 ```bash
 npx @binxgodteli/claude-ship ship --file ./claude-output.txt --name my-project --desc "A project"
 
-# Private repo with Gemini README
-npx @binxgodteli/claude-ship ship --file ./output.txt --name my-project --private --provider gemini --api-key KEY
+# Private repo with Gemini README + CI workflow
+npx @binxgodteli/claude-ship ship --file ./output.txt --name my-project --private --provider gemini --api-key KEY --ci
 
 # Preview without writing anything
 npx @binxgodteli/claude-ship ship --file ./output.txt --name my-project -d
@@ -89,6 +100,7 @@ npx @binxgodteli/claude-ship ship --file ./output.txt --name my-project -d
 | `--org <org>` | GitHub organization to create the repo under |
 | `--branch <name>` | Git branch name (default: `main`) |
 | `--no-push` | Scaffold locally, skip GitHub push |
+| `--ci` | Generate GitHub Actions CI workflow |
 | `-d, --dry-run` | Preview what would happen — no writes, no API calls |
 
 ---
@@ -101,8 +113,8 @@ Push a local project to GitHub. Creates the repo if it doesn't exist; handles di
 # Push current directory (keep existing README)
 npx @binxgodteli/claude-ship push --no-readme
 
-# Push a specific directory, regenerate README with AI
-npx @binxgodteli/claude-ship push --dir ./my-project --provider gemini --api-key KEY
+# Push with diff summary and CI generation
+npx @binxgodteli/claude-ship push --diff --ci
 
 # Push to an org as private
 npx @binxgodteli/claude-ship push --org my-org --private --no-readme
@@ -125,16 +137,21 @@ npx @binxgodteli/claude-ship push --org my-org --private --no-readme
 | `--org <org>` | GitHub organization |
 | `--branch <name>` | Branch name (default: `main`) |
 | `--message <msg>` | Git commit message (default: `🚀 Update via claude-ship`) |
+| `--diff` | Show changes summary and confirm before pushing |
+| `--ci` | Generate GitHub Actions CI workflow |
 
 ---
 
 ### `readme` — Regenerate README
 
-Regenerate the README for an existing project directory.
+Regenerate the README for an existing project directory. Supports streaming output, AI quality scoring, and custom section preservation.
 
 ```bash
 npx @binxgodteli/claude-ship readme
 npx @binxgodteli/claude-ship readme --dir ./my-project --provider gemini --vi --api-key KEY
+
+# Preview in terminal before writing
+npx @binxgodteli/claude-ship readme --preview
 ```
 
 | Flag | Description |
@@ -146,10 +163,70 @@ npx @binxgodteli/claude-ship readme --dir ./my-project --provider gemini --vi --
 | `--detail <level>` | Detail level: `short`, `normal`, `large`, `carefully` |
 | `--style <style>` | Tone: `practical`, `balanced`, `marketing` |
 | `--max-tokens <n>` | Max tokens (`0` = no limit) |
-| `--license <type>` | License type (e.g., `MIT`, `Apache-2.0`) |
-| `--author <name>` | Author name for copyright line |
-| `--github-username <name>` | GitHub username for star history chart |
-| `--no-screenshot` | Skip screenshot placeholder section |
+| `--preview` | Preview generated README in terminal before writing |
+
+---
+
+### `init` — Scaffold a new project
+
+Interactively create a new project from a template — no Claude output needed.
+
+```bash
+npx @binxgodteli/claude-ship init
+```
+
+Available templates:
+
+| Template | Stack |
+| :------- | :---- |
+| Node.js + TypeScript (ESM) | TypeScript, tsx |
+| React + Vite + TypeScript | React 19, Vite 6 |
+| Next.js (App Router) | Next.js 15, React 19 |
+| Express API + TypeScript | Express 5, TypeScript |
+| Python (FastAPI) | FastAPI, uvicorn |
+| CLI Tool (Commander) | Commander.js, chalk |
+
+Optionally generates a GitHub Actions CI workflow during scaffolding.
+
+---
+
+### `changelog` — Generate CHANGELOG from git history
+
+Reads git commit history and uses AI to produce a CHANGELOG.md in [Keep a Changelog](https://keepachangelog.com) format.
+
+```bash
+npx @binxgodteli/claude-ship changelog
+npx @binxgodteli/claude-ship changelog --dir ./my-project --provider gemini --api-key KEY
+npx @binxgodteli/claude-ship changelog --count 50
+```
+
+| Flag | Description |
+| :--- | :---------- |
+| `--dir <path>` | Project directory (default: current working directory) |
+| `--provider <name>` | AI provider: `anthropic` or `gemini` |
+| `--api-key <key>` | API key for the selected provider |
+| `--count <n>` | Max commits to include (default: 100) |
+
+---
+
+### `update` — Re-detect stack and update README
+
+Re-scans an existing project, detects the tech stack, and regenerates the README while preserving custom sections.
+
+```bash
+npx @binxgodteli/claude-ship update
+npx @binxgodteli/claude-ship update --dir ./my-project --vi
+```
+
+| Flag | Description |
+| :--- | :---------- |
+| `--dir <path>` | Project directory (default: current working directory) |
+| `--provider <name>` | AI provider: `anthropic` or `gemini` |
+| `--api-key <key>` | API key for the selected provider |
+| `--vi` | Generate README in Vietnamese |
+| `--detail <level>` | Detail level: `short`, `normal`, `large`, `carefully` |
+| `--style <style>` | Tone: `practical`, `balanced`, `marketing` |
+| `--max-tokens <n>` | Max tokens for README generation |
 
 ---
 
@@ -162,15 +239,6 @@ npx @binxgodteli/claude-ship config
 ```
 
 Sections: **AI Keys** · **GitHub** (token or OAuth) · **Defaults** (privacy, org, branch) · **README** (detail, license, author) · **Files** (glob exclusion patterns)
-
----
-
-### `name` — Set default repo name
-
-```bash
-npx @binxgodteli/claude-ship name my-default-repo
-npx @binxgodteli/claude-ship name ""   # unset
-```
 
 ---
 

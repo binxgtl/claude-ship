@@ -26,6 +26,23 @@ export interface ReadmeOptions {
   style?: ReadmeStyle;
   provider: Provider;
   apiKey: string;
+  /** Called with each text chunk during streaming generation */
+  onChunk?: (chunk: string) => void;
+  /** Fallback provider + key if primary fails */
+  fallbackProvider?: Provider;
+  fallbackApiKey?: string;
+  /** Existing README content — custom sections will be preserved on regeneration */
+  existingReadme?: string;
+}
+
+export interface ReadmeResult {
+  content: string;
+  /** AI-evaluated quality score 0–100 */
+  qualityScore: number;
+  /** Issues found by AI evaluation */
+  qualityIssues: string[];
+  /** Whether a fallback provider was used */
+  usedFallback: boolean;
 }
 
 // ─── Screenshot placeholder ───────────────────────────────────────────────────
@@ -72,12 +89,12 @@ function sanitizeOutput(text: string, ctx: ReadmeContext): SanitizeResult {
   const leaks = [...text.matchAll(LEAKED_PLACEHOLDER_RE)].map((m) => m[0]);
   if (leaks.length > 0) {
     // Only remove lines that are *only* a placeholder (avoids breaking inline HTML)
+    // Use a fresh non-global regex to avoid lastIndex issues with .test() in .map()
+    const placeholderLine = /<(?!(?:!--|\/?\w+(?:\s[^>]*)?>))[^>]{1,80}>/;
     clean = clean
       .split("\n")
-      .map((line) => (LEAKED_PLACEHOLDER_RE.test(line.trim()) ? "" : line))
+      .map((line) => (placeholderLine.test(line.trim()) ? "" : line))
       .join("\n");
-    // Reset lastIndex after global test
-    LEAKED_PLACEHOLDER_RE.lastIndex = 0;
     clean = clean.replace(/\n{3,}/g, "\n\n");
     issues.push(`${leaks.length} placeholder line(s) stripped: ${leaks.slice(0, 3).join(", ")}`);
   }
@@ -959,6 +976,17 @@ function buildUsageHints(ctx: ReadmeContext): string {
 function buildContextSection(ctx: ReadmeContext): string {
   const parts: string[] = [];
 
+  if (ctx.workspacePackages.length > 0) {
+    const table = ctx.workspacePackages
+      .map((ws) => `| ${ws.name} | ${ws.path} | ${ws.description ?? ""} | ${ws.version ?? ""} |`)
+      .join("\n");
+    parts.push(`## Monorepo workspace packages
+| Package | Path | Description | Version |
+|---------|------|-------------|---------|
+${table}
+Include a "Packages" or "Workspace" section in the README listing these packages.`);
+  }
+
   if (ctx.configFileName && ctx.configSnippet) {
     parts.push(`## Config file: ${ctx.configFileName}
 \`\`\`
@@ -1023,9 +1051,140 @@ function starHistoryBlock(username: string, repoName: string): string {
 </p>`;
 }
 
+// ─── Section preservation ────────────────────────────────────────────────────
+
+interface ReadmeSection {
+  heading: string;
+  level: number;
+  body: string;
+}
+
+const STANDARD_HEADINGS = new Set([
+  "features", "tính năng",
+  "tech stack", "architecture", "kiến trúc",
+  "getting started", "bắt đầu", "bắt đầu nhanh", "cài đặt",
+  "installation", "prerequisites",
+  "usage", "sử dụng", "sử dụng chi tiết", "sử dụng đầy đủ",
+  "full usage reference",
+  "configuration", "configuration reference", "cấu hình", "cấu hình chi tiết",
+  "how it works", "luồng hoạt động",
+  "contributing", "đóng góp",
+  "license",
+  "troubleshooting", "xử lý sự cố",
+  "star history",
+  "screenshot",
+  "changelog", "faq",
+  "architecture & key files", "kiến trúc & các file chính",
+]);
+
+function parseSections(markdown: string): ReadmeSection[] {
+  const lines = markdown.split("\n");
+  const sections: ReadmeSection[] = [];
+  let current: ReadmeSection | null = null;
+  const bodyLines: string[] = [];
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch) {
+      if (current) {
+        current.body = bodyLines.join("\n").trim();
+        sections.push(current);
+        bodyLines.length = 0;
+      }
+      current = {
+        level: headingMatch[1]!.length,
+        heading: headingMatch[2]!.trim(),
+        body: "",
+      };
+    } else {
+      bodyLines.push(line);
+    }
+  }
+  if (current) {
+    current.body = bodyLines.join("\n").trim();
+    sections.push(current);
+  }
+
+  return sections;
+}
+
+function normalizeHeading(heading: string): string {
+  return heading.replace(/[^\w\s]/g, "").trim().toLowerCase();
+}
+
+function extractCustomSections(existingReadme: string): string[] {
+  const sections = parseSections(existingReadme);
+  const custom: string[] = [];
+
+  for (const sec of sections) {
+    const normalized = normalizeHeading(sec.heading);
+    if (!STANDARD_HEADINGS.has(normalized)) {
+      const prefix = "#".repeat(sec.level);
+      custom.push(`${prefix} ${sec.heading}\n\n${sec.body}`);
+    }
+  }
+  return custom;
+}
+
+function mergeCustomSections(newReadme: string, customSections: string[]): string {
+  if (customSections.length === 0) return newReadme;
+  const block = customSections.join("\n\n");
+  return injectBeforeLicense(newReadme, block);
+}
+
+// ─── AI quality evaluation ──────────────────────────────────────────────────
+
+interface AiEvaluation {
+  score: number;
+  issues: string[];
+}
+
+function buildEvalPrompt(readme: string, projectName: string): string {
+  return `You are a technical documentation reviewer. Score this README.md for the project "${projectName}" on a scale of 0–100.
+
+Evaluate these criteria:
+- Accuracy: does it avoid inventing features, commands, or env vars?
+- Completeness: does it have install instructions, usage examples, and feature list?
+- Clarity: is it well-structured and easy to scan?
+- Professionalism: no placeholder text, no hedging ("possibly", "might be"), no generic marketing ("powerful", "seamless")
+
+Respond in EXACTLY this JSON format, nothing else:
+{"score": <number>, "issues": ["<issue1>", "<issue2>"]}
+
+If score >= 85, issues can be empty. Maximum 5 issues, each under 80 chars.
+
+README to evaluate:
+${readme.slice(0, 6000)}`;
+}
+
+async function evaluateWithAi(
+  readme: string,
+  projectName: string,
+  provider: Provider,
+  apiKey: string,
+): Promise<AiEvaluation> {
+  try {
+    const response = await generateText({
+      provider,
+      apiKey,
+      prompt: buildEvalPrompt(readme, projectName),
+      maxTokens: 300,
+    });
+    const json = response.match(/\{[\s\S]*\}/)?.[0];
+    if (!json) return { score: 70, issues: ["Could not parse evaluation response"] };
+    const parsed = JSON.parse(json) as { score?: number; issues?: string[] };
+    return {
+      score: Math.max(0, Math.min(100, parsed.score ?? 70)),
+      issues: Array.isArray(parsed.issues) ? parsed.issues.slice(0, 5) : [],
+    };
+  } catch {
+    return { score: 70, issues: ["AI evaluation failed"] };
+  }
+}
+
 // ─── Generator ────────────────────────────────────────────────────────────────
 
-export async function generateReadme(opts: ReadmeOptions): Promise<string> {
+export async function generateReadme(opts: ReadmeOptions): Promise<ReadmeResult> {
   const isNewLang = opts.stack.isNewLanguage;
 
   function buildPrompt(suffix = ""): string {
@@ -1044,34 +1203,97 @@ export async function generateReadme(opts: ReadmeOptions): Promise<string> {
     detail === "short" ? 2000 :
     detail === "normal" ? 4000 :
     detail === "large" ? 8000 : 16000;
-  // 0 means "no artificial limit" — provider will use its own maximum
   const maxTokens = opts.maxTokens === 0 ? 32000 : (opts.maxTokens ?? defaultTokens);
 
-  async function generate(prompt: string): Promise<string> {
-    const text = await generateText({ provider: opts.provider, apiKey: opts.apiKey, prompt, maxTokens });
+  let activeProvider = opts.provider;
+  let activeApiKey = opts.apiKey;
+  let usedFallback = false;
+
+  async function generate(prompt: string, stream = true): Promise<string> {
+    const text = await generateText({
+      provider: activeProvider,
+      apiKey: activeApiKey,
+      prompt,
+      maxTokens,
+      onChunk: stream ? opts.onChunk : undefined,
+    });
     let result = text.trim();
-    // Strip "name" from any subcommand enumeration — .name() sets program name, not a command
-    result = result.replace(/,\s*(?:and\s+)?`name`/g, "").replace(/`name`(?:,\s*)/g, "");
+    result = result.replace(/(?<=`\w+`(?:,\s*`\w+`)*),\s*(?:and\s+)?`name`/g, "");
+    result = result.replace(/`name`(?:,\s*)(?=`\w+`)/g, "");
     return result;
   }
 
-  let result = await generate(buildPrompt());
-  const { text, score, issues } = sanitizeOutput(result, opts.context);
-  result = text;
-
-  // Quality gate: regen once if score is too low
-  if (score < 60) {
-    const retry = await generate(buildPrompt(stricterPromptSuffix(issues)));
-    const retryClean = sanitizeOutput(retry, opts.context);
-    if (retryClean.score >= score) {
-      result = retryClean.text;
+  // Try primary provider, fall back to secondary on failure (#5)
+  let result: string;
+  try {
+    result = await generate(buildPrompt());
+  } catch (primaryErr) {
+    if (opts.fallbackProvider && opts.fallbackApiKey) {
+      activeProvider = opts.fallbackProvider;
+      activeApiKey = opts.fallbackApiKey;
+      usedFallback = true;
+      result = await generate(buildPrompt());
+    } else {
+      throw primaryErr;
     }
   }
 
+  // Regex-based cleanup (fast, always runs)
+  const { text: cleanText, score: regexScore, issues: regexIssues } = sanitizeOutput(result, opts.context);
+  result = cleanText;
+
+  // If regex score is low, retry with stricter prompt before AI eval
+  if (regexScore < 60) {
+    try {
+      const retry = await generate(buildPrompt(stricterPromptSuffix(regexIssues)), false);
+      const retryClean = sanitizeOutput(retry, opts.context);
+      if (retryClean.score >= regexScore) {
+        result = retryClean.text;
+      }
+    } catch {
+      // keep original result if retry fails
+    }
+  }
+
+  // AI self-evaluation (#3)
+  const aiEval = await evaluateWithAi(result, opts.projectName, activeProvider, activeApiKey);
+
+  // If AI score is low and we haven't retried yet, try one more time with AI feedback
+  if (aiEval.score < 60 && regexScore >= 60 && aiEval.issues.length > 0) {
+    const feedbackSuffix = `\n\n## REGEN — AI reviewer found issues (score: ${aiEval.score}/100):\n${aiEval.issues.map(i => `- ${i}`).join("\n")}\nFix ALL listed issues. Do NOT include placeholder text.`;
+    try {
+      const retry = await generate(buildPrompt(feedbackSuffix), false);
+      const retryClean = sanitizeOutput(retry, opts.context);
+      if (retryClean.score >= regexScore) {
+        result = retryClean.text;
+        const reEval = await evaluateWithAi(result, opts.projectName, activeProvider, activeApiKey);
+        if (reEval.score > aiEval.score) {
+          aiEval.score = reEval.score;
+          aiEval.issues = reEval.issues;
+        }
+      }
+    } catch {
+      // keep current result
+    }
+  }
+
+  // Inject star history if configured
   if (opts.sections?.starHistory && opts.githubUsername) {
     result = injectBeforeLicense(result, starHistoryBlock(opts.githubUsername, opts.projectName));
   }
-  return result;
+
+  // Preserve custom sections from existing README (#4)
+  if (opts.existingReadme) {
+    const customSections = extractCustomSections(opts.existingReadme);
+    result = mergeCustomSections(result, customSections);
+  }
+
+  return {
+    content: result,
+    qualityScore: aiEval.score,
+    qualityIssues: aiEval.issues,
+    usedFallback,
+  };
 }
 
 export function providerDisplayName(provider: Provider): string {

@@ -1,5 +1,4 @@
 import { simpleGit, SimpleGit } from "simple-git";
-import path from "path";
 
 export async function initAndCommit(
   dir: string,
@@ -50,8 +49,4 @@ export async function addRemoteAndPush(
     ? ["--force", "--set-upstream", "origin", branch]
     : ["--set-upstream", "origin", branch];
   await git.push(pushArgs);
-}
-
-export function resolveOutputDir(projectName: string, base = process.cwd()): string {
-  return path.resolve(base, projectName);
 }

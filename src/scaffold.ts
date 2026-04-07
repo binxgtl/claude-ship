@@ -18,7 +18,11 @@ export function writeFiles(outputDir: string, files: ParsedFile[]): void {
 }
 
 export function writeFile(outputDir: string, filePath: string, content: string): void {
-  const fullPath = path.join(outputDir, filePath);
+  const resolvedBase = path.resolve(outputDir);
+  const fullPath = path.resolve(resolvedBase, normalizeFsPath(filePath));
+  if (!fullPath.startsWith(resolvedBase + path.sep) && fullPath !== resolvedBase) {
+    throw new Error(`Unsafe path rejected: "${filePath}"`);
+  }
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
   fs.writeFileSync(fullPath, content, "utf8");
 }
@@ -140,6 +144,13 @@ const ENTRY_PRIORITY = [
   "src/main/kotlin/Main.kt",
 ];
 
+export interface WorkspacePackage {
+  name: string;
+  path: string;
+  description?: string;
+  version?: string;
+}
+
 export interface ReadmeContext {
   configFileName: string;
   configSnippet: string;
@@ -161,6 +172,8 @@ export interface ReadmeContext {
   packageManager: string;
   /** True if the project has test files or a test script */
   hasTests: boolean;
+  /** Workspace packages detected in monorepo setups */
+  workspacePackages: WorkspacePackage[];
 }
 
 interface PackageJson {
@@ -273,7 +286,58 @@ export function extractReadmeContext(files: ParsedFile[]): ReadmeContext {
     cliScripts.includes("test:") ||
     files.some((f) => /\.(test|spec)\.(ts|js|tsx|jsx|py|rs|go)$/.test(f.path) || f.path.includes("__tests__"));
 
-  return { configFileName, configSnippet, entryFileName, entrySnippet, binName, cliScripts, depsWithVersions, additionalSnippets, cliCommands, envVars, packageManager, hasTests };
+  const workspacePackages = detectWorkspaces(files);
+
+  return { configFileName, configSnippet, entryFileName, entrySnippet, binName, cliScripts, depsWithVersions, additionalSnippets, cliCommands, envVars, packageManager, hasTests, workspacePackages };
+}
+
+// ─── Monorepo / workspace detector ───────────────────────────────────────────
+
+function detectWorkspaces(files: ParsedFile[]): WorkspacePackage[] {
+  const rootPkg = files.find((f) => f.path === "package.json");
+  if (!rootPkg?.content) return [];
+
+  try {
+    const pkg = JSON.parse(rootPkg.content) as { workspaces?: string[] | { packages?: string[] } };
+    const patterns = Array.isArray(pkg.workspaces)
+      ? pkg.workspaces
+      : pkg.workspaces?.packages;
+    if (!patterns || patterns.length === 0) return [];
+  } catch {
+    return [];
+  }
+
+  // Find all nested package.json files (depth 2, e.g., packages/foo/package.json)
+  const nested = files.filter(
+    (f) => f.path !== "package.json" && f.path.endsWith("/package.json") && f.path.split("/").length <= 3
+  );
+
+  const packages: WorkspacePackage[] = [];
+  for (const f of nested) {
+    try {
+      const p = JSON.parse(f.content) as { name?: string; description?: string; version?: string };
+      const dir = f.path.replace(/\/package\.json$/, "");
+      packages.push({
+        name: p.name ?? dir,
+        path: dir,
+        description: p.description,
+        version: p.version,
+      });
+    } catch {
+      // skip malformed
+    }
+  }
+
+  // Also check for pnpm-workspace.yaml
+  if (packages.length === 0) {
+    const pnpmWs = files.find((f) => f.path === "pnpm-workspace.yaml");
+    if (pnpmWs) {
+      // If pnpm-workspace.yaml exists but we couldn't find nested packages, just return empty
+      // The workspace detection still flags it as a monorepo via the yaml presence
+    }
+  }
+
+  return packages;
 }
 
 // ─── CLI command detector ─────────────────────────────────────────────────────
@@ -462,6 +526,54 @@ function keySnippet(content: string, lines = 60): string {
   if (start > all.length * 0.6) start = 0;
 
   return all.slice(start, start + lines).join("\n");
+}
+
+// ─── Workspace detection from directory ──────────────────────────────────────
+
+export function detectWorkspacesFromDir(dir: string): WorkspacePackage[] {
+  const pkgPath = path.join(dir, "package.json");
+  if (!fs.existsSync(pkgPath)) return [];
+
+  try {
+    const raw = fs.readFileSync(pkgPath, "utf8");
+    const pkg = JSON.parse(raw) as { workspaces?: string[] | { packages?: string[] } };
+    const patterns = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
+    if (!patterns || patterns.length === 0) return [];
+  } catch {
+    return [];
+  }
+
+  // Scan known workspace directories
+  const packages: WorkspacePackage[] = [];
+  const WORKSPACE_DIRS = ["packages", "apps", "libs", "modules", "services"];
+
+  for (const wsDir of WORKSPACE_DIRS) {
+    const wsPath = path.join(dir, wsDir);
+    if (!fs.existsSync(wsPath)) continue;
+
+    try {
+      const entries = fs.readdirSync(wsPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const childPkgPath = path.join(wsPath, entry.name, "package.json");
+        if (!fs.existsSync(childPkgPath)) continue;
+
+        try {
+          const childPkg = JSON.parse(fs.readFileSync(childPkgPath, "utf8")) as {
+            name?: string; description?: string; version?: string;
+          };
+          packages.push({
+            name: childPkg.name ?? entry.name,
+            path: `${wsDir}/${entry.name}`,
+            description: childPkg.description,
+            version: childPkg.version,
+          });
+        } catch { /* skip */ }
+      }
+    } catch { /* skip unreadable */ }
+  }
+
+  return packages;
 }
 
 // ─── Glob filtering ───────────────────────────────────────────────────────────
@@ -760,8 +872,13 @@ export function writeLicenseFile(
   year = new Date().getFullYear()
 ): void {
   if (!license) return;
+  // Check for any existing LICENSE variant (LICENSE, LICENSE.md, LICENSE.txt, etc.)
+  // so a custom license from parsed input is never overwritten.
+  const hasExisting =
+    fs.existsSync(outputDir) &&
+    fs.readdirSync(outputDir).some((f) => /^LICENSE(\.[a-z]+)?$/i.test(f));
+  if (hasExisting) return;
   const dest = path.join(outputDir, "LICENSE");
-  if (fs.existsSync(dest)) return;
   const text = generateLicenseFile(license, author || "Contributors", year);
   fs.writeFileSync(dest, text, "utf8");
 }

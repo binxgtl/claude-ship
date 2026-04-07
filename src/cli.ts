@@ -7,8 +7,9 @@ import { detectTechStack, getGitignoreContent } from "./detector.js";
 import {
   generateReadme,
   generateReadmeFallback,
+  type ReadmeResult,
 } from "./readme.js";
-import { initAndCommit, addRemoteAndPush, resolveOutputDir } from "./git.js";
+import { initAndCommit, addRemoteAndPush } from "./git.js";
 import { resolveGitHubToken, createGitHubRepo, validateGitHubToken } from "./github.js";
 import {
   writeFiles,
@@ -22,6 +23,8 @@ import {
   filterFilesForReadme,
   patchPackageJsonUrls,
   writeLicenseFile,
+  resolveOutputDir,
+  detectWorkspacesFromDir,
 } from "./scaffold.js";
 import {
   loadConfig,
@@ -48,7 +51,10 @@ import {
   readMultilineInput,
   c,
 } from "./ui.js";
-import type { Provider, ReadmeDetail, ReadmeStyle } from "./types.js";
+import { runInit } from "./init.js";
+import { generateChangelog } from "./changelog.js";
+import { generateCiWorkflow } from "./ci-generator.js";
+import type { AppConfig, Provider, ReadmeDetail, ReadmeStyle } from "./types.js";
 
 // ─── CLI definition ───────────────────────────────────────────────────────────
 
@@ -93,6 +99,7 @@ export function createCLI(): Command {
       "Max output tokens for README generation. 0 = no limit (provider maximum). Default varies by --detail level."
     )
     .option("-d, --dry-run", "Preview what would be created — no writes, no API calls", false)
+    .option("--ci", "Generate GitHub Actions CI workflow", false)
     .action(async (opts) => {
       try {
         await runShip(opts);
@@ -126,6 +133,7 @@ export function createCLI(): Command {
       "--max-tokens <n>",
       "Max output tokens for README generation. 0 = no limit."
     )
+    .option("--preview", "Preview generated README in terminal before writing", false)
     .action(async (opts) => {
       try {
         await runReadme(opts);
@@ -166,6 +174,8 @@ export function createCLI(): Command {
       "Max output tokens for README generation. 0 = no limit."
     )
     .option("--message <msg>", "Git commit message (default: '🚀 Update via claude-ship')")
+    .option("--diff", "Show changes summary and confirm before pushing", false)
+    .option("--ci", "Generate GitHub Actions CI workflow", false)
     .action(async (opts) => {
       try {
         await runPush(opts);
@@ -188,6 +198,57 @@ export function createCLI(): Command {
       }
     });
 
+  // ── init ───────────────────────────────────────────────────────────────────
+  program
+    .command("init")
+    .description("Scaffold a new project from a template (no Claude input needed)")
+    .action(async () => {
+      try {
+        await printBanner();
+        await runInit();
+      } catch (err) {
+        printError(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
+
+  // ── changelog ──────────────────────────────────────────────────────────────
+  program
+    .command("changelog")
+    .description("Generate CHANGELOG.md from git history using AI")
+    .option("--dir <path>", "Project directory (default: cwd)", ".")
+    .option("--provider <name>", 'AI provider: "anthropic" or "gemini"')
+    .option("--api-key <key>", "API key for the selected provider")
+    .option("--count <n>", "Max commits to include (default: 100)")
+    .action(async (opts) => {
+      try {
+        await runChangelog(opts);
+      } catch (err) {
+        printError(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
+
+  // ── update ─────────────────────────────────────────────────────────────────
+  program
+    .command("update")
+    .description("Re-detect tech stack and update README badges, install instructions")
+    .option("--dir <path>", "Project directory (default: cwd)", ".")
+    .option("--provider <name>", 'AI provider: "anthropic" or "gemini"')
+    .option("--api-key <key>", "API key for the selected provider")
+    .option("--vi", "Generate README in Vietnamese", false)
+    .option("--detail <level>", 'README detail level: "short", "normal", "large", "carefully"')
+    .option("--style <style>", 'README tone: "practical", "balanced", "marketing"')
+    .option("--max-tokens <n>", "Max output tokens for README generation")
+    .action(async (opts) => {
+      try {
+        await runUpdate(opts);
+      } catch (err) {
+        printError(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+    });
+
   return program;
 }
 
@@ -197,11 +258,10 @@ export function createCLI(): Command {
  * Resolve the GitHub token and, if githubUsername is not yet saved in config,
  * fetch it from the GitHub API and persist it automatically.
  */
-async function resolveTokenAndUsername(flagToken?: string): Promise<{ token: string; username: string }> {
+async function resolveTokenAndUsername(flagToken?: string, savedUsername?: string): Promise<{ token: string; username: string }> {
   const token = await resolveGitHubToken(flagToken);
-  const cfg = loadConfig();
-  if (cfg.githubUsername) {
-    return { token, username: cfg.githubUsername };
+  if (savedUsername) {
+    return { token, username: savedUsername };
   }
   try {
     const info = await validateGitHubToken(token);
@@ -217,6 +277,31 @@ function validateProvider(raw: string): Provider {
   throw new Error(`Unknown provider "${raw}". Use "anthropic" or "gemini".`);
 }
 
+function resolveFallback(primary: Provider, cfg: AppConfig): { provider: Provider; apiKey: string } | undefined {
+  const alt: Provider = primary === "anthropic" ? "gemini" : "anthropic";
+  const key = alt === "anthropic" ? cfg.anthropicApiKey : cfg.geminiApiKey;
+  if (!key) return undefined;
+  return { provider: alt, apiKey: key };
+}
+
+function printQuality(result: ReadmeResult): void {
+  const score = result.qualityScore;
+  const color = score >= 80 ? "green" : score >= 60 ? "yellow" : "red";
+  const icon = score >= 80 ? "✔" : score >= 60 ? "⚠" : "✖";
+  const line = `${icon} README quality: ${score}/100`;
+  if (color === "green") printSuccess(line);
+  else if (color === "yellow") printWarning(line);
+  else printError(line);
+  if (result.qualityIssues.length > 0) {
+    for (const issue of result.qualityIssues) {
+      console.log(`  ${c.dim("•")} ${issue}`);
+    }
+  }
+  if (result.usedFallback) {
+    printInfo("Primary provider failed — used fallback provider");
+  }
+}
+
 function resolveMaxTokens(flag?: string, configValue?: number): number | undefined {
   if (flag !== undefined) {
     const n = parseInt(flag, 10);
@@ -225,15 +310,14 @@ function resolveMaxTokens(flag?: string, configValue?: number): number | undefin
   return configValue;
 }
 
-function resolveDetail(flag?: string): ReadmeDetail {
-  const cfg = loadConfig().defaultReadmeDetail ?? "normal";
-  const raw = flag ?? cfg;
+function resolveDetail(flag: string | undefined, cfg: AppConfig): ReadmeDetail {
+  const raw = flag ?? cfg.defaultReadmeDetail ?? "normal";
   if (raw === "short" || raw === "normal" || raw === "large" || raw === "carefully") return raw;
   throw new Error(`Unknown detail level "${raw}". Use: short, normal, large, carefully.`);
 }
 
-function resolveStyle(flag?: string): ReadmeStyle | undefined {
-  if (!flag) return loadConfig().defaultReadmeStyle;
+function resolveStyle(flag: string | undefined, cfg: AppConfig): ReadmeStyle | undefined {
+  if (!flag) return cfg.defaultReadmeStyle;
   if (flag === "practical" || flag === "balanced" || flag === "marketing") return flag;
   throw new Error(`Unknown style "${flag}". Use: practical, balanced, marketing.`);
 }
@@ -303,6 +387,7 @@ interface ShipOptions {
   maxTokens?: string;
   style?: string;
   dryRun: boolean;
+  ci: boolean;
 }
 
 async function runShip(opts: ShipOptions) {
@@ -424,10 +509,11 @@ async function runShip(opts: ShipOptions) {
   }
 
   // 6b. Resolve GitHub token + username early so README URLs use the real username
-  let earlyUsername = loadConfig().githubUsername ?? "";
+  const cfg = loadConfig();
+  let earlyUsername = cfg.githubUsername ?? "";
   if (opts.push && !opts.dryRun && !earlyUsername) {
     try {
-      const { username } = await resolveTokenAndUsername(opts.token ?? answers.githubToken);
+      const { username } = await resolveTokenAndUsername(opts.token ?? answers.githubToken, cfg.githubUsername);
       earlyUsername = username;
     } catch {
       // will fail again later with a proper error message
@@ -483,25 +569,33 @@ async function runShip(opts: ShipOptions) {
   );
   writeFiles(outputDir, parseResult.files);
   writeFile(outputDir, ".gitignore", getGitignoreContent(stack.gitignorePreset));
-  spinWrite.succeed("Files written");
+  if (opts.ci) {
+    const ciContent = generateCiWorkflow({
+      gitignorePreset: stack.gitignorePreset,
+      packageManager: stack.packageManager,
+      hasTests: readmeContext.hasTests,
+    });
+    writeFile(outputDir, ".github/workflows/ci.yml", ciContent);
+  }
+  spinWrite.succeed("Files written" + (opts.ci ? " (+ CI workflow)" : ""));
 
   // 9. Generate README ──────────────────────────────────────────────────────────
-  const detail = resolveDetail(opts.detail);
-  const shipCfg = loadConfig();
-  const isVi = opts.vi || (shipCfg.defaultVi ?? false);
+  const detail = resolveDetail(opts.detail, cfg);
+  const isVi = opts.vi || (cfg.defaultVi ?? false);
   const readmeFiles = filterFilesForReadme(
-    filterFilesForAI(parseResult.files.map((f) => f.path), shipCfg.aiExcludePatterns),
-    shipCfg.readmeExcludePatterns
+    filterFilesForAI(parseResult.files.map((f) => f.path), cfg.aiExcludePatterns),
+    cfg.readmeExcludePatterns
   );
 
   let readmeContent: string;
   if (opts.readme && apiKey) {
     const label = providerLabel(provider);
+    const fallback = resolveFallback(provider, cfg);
     const spinReadme = spinner(
       `Generating ${opts.vi ? "Vietnamese " : ""}README via ${label}…`
     );
     try {
-      readmeContent = await generateReadme({
+      const readmeResult = await generateReadme({
         projectName,
         description,
         stack,
@@ -509,16 +603,22 @@ async function runShip(opts: ShipOptions) {
         context: readmeContext,
         vietnamese: isVi,
         detail,
-        style: resolveStyle(opts.style),
-        license: shipCfg.defaultLicense,
-        author: shipCfg.projectAuthor ?? (earlyUsername || shipCfg.githubUsername),
-        sections: shipCfg.readmeSections,
-        githubUsername: earlyUsername || shipCfg.githubUsername,
-        maxTokens: resolveMaxTokens(opts.maxTokens, shipCfg.maxReadmeTokens),
+        style: resolveStyle(opts.style, cfg),
+        license: cfg.defaultLicense,
+        author: cfg.projectAuthor ?? (earlyUsername || cfg.githubUsername),
+        sections: cfg.readmeSections,
+        githubUsername: earlyUsername || cfg.githubUsername,
+        maxTokens: resolveMaxTokens(opts.maxTokens, cfg.maxReadmeTokens),
         provider,
         apiKey,
+        fallbackProvider: fallback?.provider,
+        fallbackApiKey: fallback?.apiKey,
+        onChunk: (chunk) => { spinReadme.stop(); process.stdout.write(chunk); },
       });
-      spinReadme.succeed(`README generated via ${label}`);
+      readmeContent = readmeResult.content;
+      console.log(); // newline after streamed output
+      spinReadme.succeed(`README generated via ${readmeResult.usedFallback ? providerLabel(fallback!.provider) : label}`);
+      printQuality(readmeResult);
     } catch (err) {
       spinReadme.warn("README generation failed — using built-in template");
       printWarning(err instanceof Error ? err.message : String(err));
@@ -552,7 +652,7 @@ async function runShip(opts: ShipOptions) {
   printSuccess("README.md written");
 
   // Patch placeholder GitHub URLs in package.json using resolved username
-  const effectiveShipUsername = earlyUsername || shipCfg.githubUsername;
+  const effectiveShipUsername = earlyUsername || cfg.githubUsername;
   if (effectiveShipUsername) {
     patchPackageJsonUrls(outputDir, effectiveShipUsername);
   }
@@ -560,14 +660,13 @@ async function runShip(opts: ShipOptions) {
   // Write LICENSE file — default MIT if not explicitly configured
   writeLicenseFile(
     outputDir,
-    shipCfg.defaultLicense ?? "MIT",
-    shipCfg.projectAuthor ?? effectiveShipUsername
+    cfg.defaultLicense ?? "MIT",
+    cfg.projectAuthor ?? effectiveShipUsername
   );
 
   // 10. Git init + commit ───────────────────────────────────────────────────────
   const spinGit = spinner("Initializing git and committing…");
   const allFiles = getAllFilePaths(outputDir);
-  const cfg = loadConfig();
   const gitFiles = filterFilesForGit(
     allFiles,
     cfg.gitIncludePatterns,
@@ -586,18 +685,17 @@ async function runShip(opts: ShipOptions) {
 
   let token: string;
   try {
-    ({ token } = await resolveTokenAndUsername(opts.token ?? answers.githubToken));
+    ({ token } = await resolveTokenAndUsername(opts.token ?? answers.githubToken, cfg.githubUsername));
   } catch (err) {
     printError(err instanceof Error ? err.message : String(err));
     printInfo(`Files scaffolded at: ${c.path(outputDir)}`);
     return;
   }
 
-  const pushCfg = loadConfig();
   // Use freshly resolved username so README URLs are correct even on first run
-  const targetOrg = opts.org ?? pushCfg.defaultOrg;
-  const targetBranch = opts.branch ?? pushCfg.defaultBranch ?? "main";
-  const useSSH = pushCfg.useSshRemote ?? false;
+  const targetOrg = opts.org ?? cfg.defaultOrg;
+  const targetBranch = opts.branch ?? cfg.defaultBranch ?? "main";
+  const useSSH = cfg.useSshRemote ?? false;
 
   const spinRepo = spinner(
     targetOrg
@@ -652,12 +750,13 @@ interface ReadmeRunOptions {
   detail?: string;
   maxTokens?: string;
   style?: string;
+  preview: boolean;
 }
 
 async function runReadme(opts: ReadmeRunOptions) {
   const provider = validateProvider(opts.provider);
-  const detail = resolveDetail(opts.detail);
-  const readmeCfgAll = loadConfig();
+  const readmeCfg = loadConfig();
+  const detail = resolveDetail(opts.detail, readmeCfg);
   const dir = fs.realpathSync(opts.dir);
 
   const apiKey = await ensureApiKey(provider, opts.apiKey);
@@ -669,9 +768,8 @@ async function runReadme(opts: ReadmeRunOptions) {
     );
   }
 
-  const isVi = opts.vi || (readmeCfgAll.defaultVi ?? false);
+  const isVi = opts.vi || (readmeCfg.defaultVi ?? false);
   const allFiles = getAllFilePaths(dir);
-  const readmeCfg = readmeCfgAll;
   const aiFiltered = filterFilesForAI(allFiles, readmeCfg.aiExcludePatterns);
   const readmeFiltered = filterFilesForReadme(aiFiltered, readmeCfg.readmeExcludePatterns);
 
@@ -697,10 +795,13 @@ async function runReadme(opts: ReadmeRunOptions) {
   }
 
   const label = providerLabel(provider);
+  const fallback = resolveFallback(provider, readmeCfg);
+  const outPath = `${dir}/README.md`;
+  const existingReadme = fs.existsSync(outPath) ? fs.readFileSync(outPath, "utf8") : undefined;
   const spinReadme = spinner(
     `Generating ${isVi ? "Vietnamese " : ""}README via ${label}…`
   );
-  const content = await generateReadme({
+  const readmeResult = await generateReadme({
     projectName,
     description,
     stack,
@@ -708,7 +809,7 @@ async function runReadme(opts: ReadmeRunOptions) {
     context,
     vietnamese: isVi,
     detail,
-    style: resolveStyle(opts.style),
+    style: resolveStyle(opts.style, readmeCfg),
     license: readmeCfg.defaultLicense,
     author: readmeCfg.projectAuthor ?? readmeCfg.githubUsername,
     sections: readmeCfg.readmeSections,
@@ -716,11 +817,36 @@ async function runReadme(opts: ReadmeRunOptions) {
     maxTokens: resolveMaxTokens(opts.maxTokens, readmeCfg.maxReadmeTokens),
     provider,
     apiKey,
+    fallbackProvider: fallback?.provider,
+    fallbackApiKey: fallback?.apiKey,
+    existingReadme,
+    onChunk: (chunk) => { spinReadme.stop(); process.stdout.write(chunk); },
   });
-  spinReadme.succeed(`README generated via ${label}`);
+  console.log();
+  spinReadme.succeed(`README generated via ${readmeResult.usedFallback ? providerLabel(fallback!.provider) : label}`);
+  printQuality(readmeResult);
 
-  const outPath = `${dir}/README.md`;
-  fs.writeFileSync(outPath, content, "utf8");
+  if (opts.preview) {
+    console.log();
+    console.log(c.dim("─".repeat(60)));
+    console.log(readmeResult.content);
+    console.log(c.dim("─".repeat(60)));
+    console.log();
+
+    const { confirm } = await inquirer.prompt<{ confirm: boolean }>([{
+      type: "confirm",
+      name: "confirm",
+      message: "Write this README to disk?",
+      default: true,
+    }]);
+
+    if (!confirm) {
+      printInfo("Aborted — README not written.");
+      return;
+    }
+  }
+
+  fs.writeFileSync(outPath, readmeResult.content, "utf8");
   printSuccess(`README written to ${c.path(outPath)}`);
 }
 
@@ -744,6 +870,8 @@ interface PushOptions {
   maxTokens?: string;
   style?: string;
   message?: string;
+  diff: boolean;
+  ci: boolean;
 }
 
 async function runPush(opts: PushOptions) {
@@ -787,11 +915,14 @@ async function runPush(opts: PushOptions) {
       const stack = detectTechStack(parsedFiles);
       const context = extractReadmeContext(parsedFiles);
       const isVi = opts.vi || (cfg.defaultVi ?? false);
-      const detail = resolveDetail(opts.detail);
+      const detail = resolveDetail(opts.detail, cfg);
 
+      const fallback = resolveFallback(provider, cfg);
+      const readmePath = path.join(dir, "README.md");
+      const existingReadme = fs.existsSync(readmePath) ? fs.readFileSync(readmePath, "utf8") : undefined;
       const spinReadme = spinner(`Generating ${isVi ? "Vietnamese " : ""}README…`);
       try {
-        const readmeContent = await generateReadme({
+        const readmeResult = await generateReadme({
           projectName,
           description,
           stack,
@@ -799,7 +930,7 @@ async function runPush(opts: PushOptions) {
           context,
           vietnamese: isVi,
           detail,
-          style: resolveStyle(opts.style),
+          style: resolveStyle(opts.style, cfg),
           license: cfg.defaultLicense,
           author: cfg.projectAuthor ?? cfg.githubUsername,
           sections: cfg.readmeSections,
@@ -807,9 +938,15 @@ async function runPush(opts: PushOptions) {
           maxTokens: resolveMaxTokens(opts.maxTokens, cfg.maxReadmeTokens),
           provider,
           apiKey,
+          fallbackProvider: fallback?.provider,
+          fallbackApiKey: fallback?.apiKey,
+          existingReadme,
+          onChunk: (chunk) => { spinReadme.stop(); process.stdout.write(chunk); },
         });
-        fs.writeFileSync(path.join(dir, "README.md"), readmeContent, "utf8");
+        console.log();
+        fs.writeFileSync(readmePath, readmeResult.content, "utf8");
         spinReadme.succeed("README.md regenerated");
+        printQuality(readmeResult);
       } catch (err) {
         spinReadme.warn("README generation failed — keeping existing");
         printWarning(err instanceof Error ? err.message : String(err));
@@ -832,6 +969,56 @@ async function runPush(opts: PushOptions) {
 
   // Write LICENSE file — default MIT if not explicitly configured
   writeLicenseFile(dir, cfg.defaultLicense ?? "MIT", cfg.projectAuthor ?? cfg.githubUsername);
+
+  // Generate CI workflow if requested
+  if (opts.ci) {
+    const allPaths = getAllFilePaths(dir);
+    const parsedForDetect = allPaths.slice(0, 50).map((f) => {
+      let content = "";
+      try { content = fs.readFileSync(path.join(dir, f), "utf8"); } catch { /* skip */ }
+      return { path: f, content, language: undefined };
+    });
+    const stackForCi = detectTechStack(parsedForDetect);
+    const hasTests = allPaths.some((f) => /\.(test|spec)\.(ts|js|tsx|jsx|py|rs|go)$/.test(f));
+    const ciContent = generateCiWorkflow({
+      gitignorePreset: stackForCi.gitignorePreset,
+      packageManager: stackForCi.packageManager,
+      hasTests,
+    });
+    writeFile(dir, ".github/workflows/ci.yml", ciContent);
+    printSuccess("GitHub Actions CI workflow generated");
+  }
+
+  // Diff summary if requested
+  if (opts.diff) {
+    const { simpleGit } = await import("simple-git");
+    const git = simpleGit(dir);
+    const status = await git.status();
+    const modified = status.modified.length;
+    const created = status.not_added.length + status.created.length;
+    const deleted = status.deleted.length;
+
+    console.log();
+    printInfo("Changes summary:");
+    if (modified > 0) console.log(`  ${c.dim("~")} ${modified} modified`);
+    if (created > 0)  console.log(`  ${c.dim("+")} ${created} new`);
+    if (deleted > 0)  console.log(`  ${c.dim("-")} ${deleted} deleted`);
+    if (modified + created + deleted === 0) {
+      console.log(`  ${c.dim("(no changes)")}`);
+    }
+    console.log();
+
+    const { proceed } = await inquirer.prompt<{ proceed: boolean }>([{
+      type: "confirm",
+      name: "proceed",
+      message: "Proceed with commit and push?",
+      default: true,
+    }]);
+    if (!proceed) {
+      printInfo("Aborted.");
+      return;
+    }
+  }
 
   // Commit current state
   const allFiles = getAllFilePaths(dir);
@@ -895,4 +1082,142 @@ async function runPush(opts: PushOptions) {
     stack: "",
     vietnamese: false,
   });
+}
+
+// ─── Changelog flow ──────────────────────────────────────────────────────────
+
+interface ChangelogRunOptions {
+  dir: string;
+  provider?: string;
+  apiKey?: string;
+  count?: string;
+}
+
+async function runChangelog(opts: ChangelogRunOptions) {
+  await printBanner();
+  const dir = fs.realpathSync(path.resolve(opts.dir));
+  const provider = validateProvider(opts.provider ?? resolveDefaultProvider());
+  const apiKey = await ensureApiKey(provider, opts.apiKey);
+  if (!apiKey) {
+    throw new Error(
+      `API key required for changelog generation.\n` +
+        `Set ${providerEnvVar(provider)} or run: claude-ship config`
+    );
+  }
+
+  const count = opts.count ? parseInt(opts.count, 10) : 100;
+  const label = providerLabel(provider);
+  const spinLog = spinner(`Generating changelog from git history via ${label}…`);
+
+  const content = await generateChangelog({
+    dir,
+    provider,
+    apiKey,
+    count,
+    onChunk: (chunk) => { spinLog.stop(); process.stdout.write(chunk); },
+  });
+
+  console.log();
+  spinLog.succeed("Changelog generated");
+
+  const outPath = path.join(dir, "CHANGELOG.md");
+  fs.writeFileSync(outPath, content, "utf8");
+  printSuccess(`Written to ${c.path(outPath)}`);
+}
+
+// ─── Update flow ─────────────────────────────────────────────────────────────
+
+interface UpdateRunOptions {
+  dir: string;
+  provider?: string;
+  apiKey?: string;
+  vi: boolean;
+  detail?: string;
+  style?: string;
+  maxTokens?: string;
+}
+
+async function runUpdate(opts: UpdateRunOptions) {
+  await printBanner();
+  const dir = fs.realpathSync(path.resolve(opts.dir));
+  const cfg = loadConfig();
+  const provider = validateProvider(opts.provider ?? resolveDefaultProvider());
+
+  // Re-detect tech stack
+  const allPaths = getAllFilePaths(dir);
+  const aiFiltered = filterFilesForAI(allPaths, cfg.aiExcludePatterns);
+  const readmeFiltered = filterFilesForReadme(aiFiltered, cfg.readmeExcludePatterns);
+
+  const parsedFiles = readmeFiltered.map((f) => {
+    let content = "";
+    try { content = fs.readFileSync(path.join(dir, f), "utf8"); } catch { /* skip */ }
+    return { path: f, content, language: undefined };
+  });
+
+  const stack = detectTechStack(parsedFiles);
+  const context = extractReadmeContext(parsedFiles);
+  const workspaces = detectWorkspacesFromDir(dir);
+
+  printInfo(`Detected stack: ${c.bold(stack.name)}`);
+  if (workspaces.length > 0) {
+    printInfo(`Monorepo: ${workspaces.length} workspace packages detected`);
+    for (const ws of workspaces) {
+      console.log(`  ${c.dim("•")} ${ws.name} (${ws.path})`);
+    }
+  }
+
+  // Resolve project info
+  let projectName = dir.split(/[/\\]/).pop() ?? "my-project";
+  let description = "";
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as {
+      name?: string; description?: string;
+    };
+    if (pkg.name) projectName = pkg.name;
+    if (pkg.description) description = pkg.description;
+  } catch { /* no package.json */ }
+
+  // Regenerate README with existing content preserved
+  const apiKey = await ensureApiKey(provider, opts.apiKey);
+  if (!apiKey) {
+    printWarning("No API key — can only show detection results. Run `claude-ship config` to enable AI generation.");
+    return;
+  }
+
+  const isVi = opts.vi || (cfg.defaultVi ?? false);
+  const detail = resolveDetail(opts.detail, cfg);
+  const fallback = resolveFallback(provider, cfg);
+  const readmePath = path.join(dir, "README.md");
+  const existingReadme = fs.existsSync(readmePath) ? fs.readFileSync(readmePath, "utf8") : undefined;
+
+  const label = providerLabel(provider);
+  const spinReadme = spinner(`Regenerating README via ${label}…`);
+  const readmeResult = await generateReadme({
+    projectName,
+    description,
+    stack,
+    files: readmeFiltered,
+    context,
+    vietnamese: isVi,
+    detail,
+    style: resolveStyle(opts.style, cfg),
+    license: cfg.defaultLicense,
+    author: cfg.projectAuthor ?? cfg.githubUsername,
+    sections: cfg.readmeSections,
+    githubUsername: cfg.githubUsername,
+    maxTokens: resolveMaxTokens(opts.maxTokens, cfg.maxReadmeTokens),
+    provider,
+    apiKey,
+    fallbackProvider: fallback?.provider,
+    fallbackApiKey: fallback?.apiKey,
+    existingReadme,
+    onChunk: (chunk) => { spinReadme.stop(); process.stdout.write(chunk); },
+  });
+
+  console.log();
+  spinReadme.succeed(`README updated via ${readmeResult.usedFallback ? providerLabel(fallback!.provider) : label}`);
+  printQuality(readmeResult);
+
+  fs.writeFileSync(readmePath, readmeResult.content, "utf8");
+  printSuccess(`README written to ${c.path(readmePath)}`);
 }

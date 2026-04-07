@@ -750,7 +750,17 @@ const EXT_TO_LANGUAGE: Record<string, string> = {
 
 export function detectTechStack(files: ParsedFile[]): TechStack {
   const filePaths = files.map((f) => f.path);
-  const fileContents = files.map((f) => f.content).join("\n");
+  // Cap combined content to avoid expensive regex scans on large projects.
+  // Content patterns only need to find framework imports, so 500KB is plenty.
+  const MAX_CONTENT = 512_000;
+  let contentLen = 0;
+  const contentParts: string[] = [];
+  for (const f of files) {
+    if (contentLen >= MAX_CONTENT) break;
+    contentParts.push(f.content);
+    contentLen += f.content.length;
+  }
+  const fileContents = contentParts.join("\n");
 
   let bestScore = 0;
   let bestStack: TechStack = {
@@ -802,6 +812,9 @@ export function detectTechStack(files: ParsedFile[]): TechStack {
   if (filePaths.some((p) => p === "pnpm-lock.yaml")) bestStack.packageManager = "pnpm";
   else if (filePaths.some((p) => p === "yarn.lock")) bestStack.packageManager = "yarn";
 
+  // Patch badge versions with real dependency versions from package.json
+  patchBadgeVersions(bestStack, files);
+
   // Always ensure the platform badge is present — framework rules often omit it
   const PLATFORM_BADGE: Partial<Record<TechStack["packageManager"], Badge>> = {
     npm:   badge("Node.js", "18+", "339933", "node.js"),
@@ -817,6 +830,62 @@ export function detectTechStack(files: ParsedFile[]): TechStack {
   }
 
   return bestStack;
+}
+
+// ─── Badge version patching ──────────────────────────────────────────────────
+
+const BADGE_TO_PACKAGE: Record<string, string[]> = {
+  "Next.js": ["next"],
+  "React": ["react"],
+  "Vue": ["vue"],
+  "Svelte": ["svelte"],
+  "Angular": ["@angular/core"],
+  "Nuxt": ["nuxt"],
+  "Astro": ["astro"],
+  "Remix": ["@remix-run/react", "@remix-run/node"],
+  "Vite": ["vite"],
+  "Electron": ["electron"],
+  "Tauri": ["@tauri-apps/api"],
+  "TypeScript": ["typescript"],
+  "Node.js": ["node"],
+};
+
+function patchBadgeVersions(stack: TechStack, files: ParsedFile[]): void {
+  const pkgFile = files.find((f) => f.path === "package.json");
+  if (!pkgFile) return;
+
+  let deps: Record<string, string> = {};
+  let engines: Record<string, string> = {};
+  try {
+    const pkg = JSON.parse(pkgFile.content) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+      engines?: Record<string, string>;
+    };
+    deps = { ...pkg.dependencies, ...pkg.devDependencies };
+    engines = pkg.engines ?? {};
+  } catch {
+    return;
+  }
+
+  for (const b of stack.badges) {
+    const pkgNames = BADGE_TO_PACKAGE[b.label];
+    if (!pkgNames) continue;
+
+    // Check engines first (e.g. "node": ">=18")
+    if (b.label === "Node.js" && engines["node"]) {
+      b.message = engines["node"];
+      continue;
+    }
+
+    for (const name of pkgNames) {
+      const ver = deps[name];
+      if (ver) {
+        b.message = ver;
+        break;
+      }
+    }
+  }
 }
 
 /** Returns every programming language found in the file list, deduplicated. */

@@ -124,7 +124,7 @@ export function saveConfig(config: AppConfig): void {
   const stored: StoredConfig = { _enc: enc, _settings: settings };
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(stored, null, 2), {
     encoding: "utf8",
-    mode: 0o600,
+    mode: 0o600, // owner-only on POSIX; no-op on Windows (encryption is the real guard there)
   });
 }
 
