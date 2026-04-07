@@ -106,23 +106,43 @@ function sanitizeOutput(text: string, ctx: ReadmeContext): SanitizeResult {
     }
   }
 
+  // 5. Verify install block completeness.
+  //    Any Getting Started / Installation section in a code fence must include
+  //    either `git clone` (non-CLI) or `npx`/`npm install` (CLI).
+  //    A missing clone line is a hard structural failure — penalise heavily.
+  const hasInstallSection = /^#{2,3}\s.*(install|getting started|bắt đầu|cài đặt)/im.test(text);
+  let missingInstall = false;
+  if (hasInstallSection) {
+    const isCli = Boolean(ctx.binName);
+    const installOk = isCli
+      ? /\bnpx\b|\bnpm install\b|\byarn (global )?add\b|\bpnpm (add|install)\b/i.test(text)
+      : /\bgit clone\b/i.test(text);
+    if (!installOk) {
+      missingInstall = true;
+      issues.push(isCli ? "Install section missing npx/npm install command" : "Install section missing git clone command");
+    }
+  }
+
   const score = Math.max(
     0,
     100 -
       leaks.length * 15 -
       Math.min(hedgeMatches.length * 4, 20) -
-      Math.min(genericMatches.length * 3, 15)
+      Math.min(genericMatches.length * 3, 15) -
+      (missingInstall ? 40 : 0)
   );
 
   return { text: clean.trim(), score, issues };
 }
 
-function stricterPromptSuffix(): string {
+function stricterPromptSuffix(issues: string[] = []): string {
+  const extra = issues.length > 0 ? `\n- Specific issues to fix: ${issues.join("; ")}` : "";
   return `\n\n## REGEN — previous attempt had quality issues. STRICT mode:
 - Remove ALL <placeholder> tokens. If you don't know a value, omit the row/bullet entirely.
 - No hedging: remove "possibly", "likely", "potentially", "might be", "may be".
 - No generic adjectives: "powerful", "seamless", "robust", "comprehensive", "cutting-edge".
-- Every command must be real and runnable. Every env var must be from the list above.`;
+- Every command must be real and runnable. Every env var must be from the list above.
+- Installation/Getting Started section MUST include the full clone-and-run sequence: git clone → cd → install deps → run. Do NOT skip the git clone line.${extra}`;
 }
 
 // ─── English prompt ───────────────────────────────────────────────────────────
@@ -1036,12 +1056,12 @@ export async function generateReadme(opts: ReadmeOptions): Promise<string> {
   }
 
   let result = await generate(buildPrompt());
-  const { text, score } = sanitizeOutput(result, opts.context);
+  const { text, score, issues } = sanitizeOutput(result, opts.context);
   result = text;
 
   // Quality gate: regen once if score is too low
   if (score < 60) {
-    const retry = await generate(buildPrompt(stricterPromptSuffix()));
+    const retry = await generate(buildPrompt(stricterPromptSuffix(issues)));
     const retryClean = sanitizeOutput(retry, opts.context);
     if (retryClean.score >= score) {
       result = retryClean.text;

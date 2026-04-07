@@ -11,7 +11,7 @@ export interface ProviderRequest {
 /**
  * Unified text generation — returns the raw model text response.
  * Anthropic: claude-3-5-sonnet-20241022
- * Gemini:    gemini-1.5-flash (generous free tier)
+ * Gemini:    gemini-3-flash-preview
  */
 export async function generateText(req: ProviderRequest): Promise<string> {
   if (req.provider === "anthropic") {
@@ -45,7 +45,7 @@ async function generateWithGemini(req: ProviderRequest): Promise<string> {
 
   const ai = new GoogleGenAI({ apiKey: req.apiKey });
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash-lite",
+    model: "gemini-3-flash-preview",
     contents: req.prompt,
   });
 
@@ -55,7 +55,7 @@ async function generateWithGemini(req: ProviderRequest): Promise<string> {
 }
 
 export function providerLabel(provider: Provider): string {
-  return provider === "anthropic" ? "Claude 3.5 Sonnet" : "Gemini 2.5 Flash Lite";
+  return provider === "anthropic" ? "Claude 3.5 Sonnet" : "Gemini 3 Flash";
 }
 
 export function providerEnvVar(provider: Provider): string {
