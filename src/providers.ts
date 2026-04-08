@@ -238,27 +238,9 @@ async function resolveOpenAIAuth(apiKey: string): Promise<{ token: string; baseU
 async function generateWithOpenAI(req: ProviderRequest): Promise<string> {
   const { token, baseUrl, useCodex } = await resolveOpenAIAuth(req.apiKey);
 
+  // Codex API requires streaming — use streamWithOpenAI and collect
   if (useCodex) {
-    const response = await fetch(`${baseUrl}/responses`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        model: openaiModel(),
-        input: req.prompt,
-        stream: false,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`OpenAI Codex error ${response.status}: ${body}`);
-    }
-    const json = await response.json() as { output_text?: string; output?: Array<{ content?: Array<{ text?: string }> }> };
-    const text = json.output_text ?? json.output?.[0]?.content?.[0]?.text;
-    if (!text) throw new Error("Empty response from OpenAI Codex");
-    return text;
+    return streamWithOpenAI({ ...req, onChunk: req.onChunk ?? (() => {}) });
   }
 
   const response = await fetch(`${baseUrl}/chat/completions`, {
@@ -287,7 +269,7 @@ async function streamWithOpenAI(req: ProviderRequest): Promise<string> {
 
   const url = useCodex ? `${baseUrl}/responses` : `${baseUrl}/chat/completions`;
   const body = useCodex
-    ? { model: openaiModel(), input: req.prompt, stream: true }
+    ? { model: openaiModel(), instructions: "", input: [{ role: "user", content: req.prompt }], stream: true, store: false }
     : { model: openaiModel(), max_tokens: req.maxTokens ?? 2048, stream: true, messages: [{ role: "user", content: req.prompt }] };
 
   const response = await fetch(url, {

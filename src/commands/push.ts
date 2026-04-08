@@ -304,9 +304,13 @@ ${truncated || "(no diff)"}`;
       commitMessage = await generateText({ provider, apiKey, prompt, maxTokens: 256 });
       commitMessage = commitMessage.trim().replace(/^```\n?/, "").replace(/\n?```$/, "").trim();
       spinAi.succeed(`AI commit (vs ${diffSource}): ${c.accent(commitMessage.split("\n")[0]!)}`);
-    } catch {
-      spinAi.warn("AI commit message failed — using default");
+    } catch (err) {
+      spinAi.warn(`AI commit message failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  if (!commitMessage && opts.aiCommit && !apiKey) {
+    printWarning("No API key — cannot generate AI commit message. Run `claude-ship config` to set one.");
   }
 
   if (!commitMessage) commitMessage = "🚀 Update via claude-ship";
