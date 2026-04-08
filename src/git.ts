@@ -20,7 +20,11 @@ export async function initAndCommit(
   }
 
   await git.add(files.length > 0 ? files : ["-A"]);
-  await git.commit(commitMessage);
+
+  const status = await git.status();
+  if (status.staged.length > 0 || status.created.length > 0 || status.modified.length > 0 || status.deleted.length > 0 || status.renamed.length > 0) {
+    await git.commit(commitMessage);
+  }
 }
 
 export async function addRemoteAndPush(

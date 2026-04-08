@@ -119,7 +119,7 @@ function extractFences(text: string): RawFence[] {
       i++;
 
       // Collect until matching closing fence (same backtick count)
-      while (i < lines.length && lines[i] !== backticks) {
+      while (i < lines.length && lines[i]!.trimEnd() !== backticks) {
         bodyLines.push(lines[i]!);
         i++;
       }

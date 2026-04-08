@@ -17,16 +17,29 @@ function getMachineKey(): Buffer {
 
 function encrypt(plaintext: string): string {
   const key = getMachineKey();
-  const iv = crypto.randomBytes(16);
-  const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return iv.toString("hex") + ":" + encrypted.toString("hex");
+  const authTag = cipher.getAuthTag();
+  return "gcm:" + iv.toString("hex") + ":" + authTag.toString("hex") + ":" + encrypted.toString("hex");
 }
 
 function decrypt(ciphertext: string): string {
+  const key = getMachineKey();
+
+  if (ciphertext.startsWith("gcm:")) {
+    const parts = ciphertext.slice(4).split(":");
+    if (parts.length !== 3) throw new Error("Invalid GCM ciphertext format");
+    const iv = Buffer.from(parts[0]!, "hex");
+    const authTag = Buffer.from(parts[1]!, "hex");
+    const encrypted = Buffer.from(parts[2]!, "hex");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+  }
+
   const colonIdx = ciphertext.indexOf(":");
   if (colonIdx === -1) throw new Error("Invalid ciphertext format");
-  const key = getMachineKey();
   const iv = Buffer.from(ciphertext.slice(0, colonIdx), "hex");
   const encrypted = Buffer.from(ciphertext.slice(colonIdx + 1), "hex");
   const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
@@ -61,6 +74,7 @@ const PLAIN_FIELDS: (keyof AppConfig)[] = [
   "projectAuthor",
   "readmeSections",
   "defaultVi",
+  "defaultReadmeStyle",
   "maxReadmeTokens",
 ];
 

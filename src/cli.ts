@@ -2,6 +2,7 @@ import { Command } from "commander";
 import inquirer from "inquirer";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { parseClaudeResponse, buildFileTree } from "./parser.js";
 import { detectTechStack, getGitignoreContent } from "./detector.js";
 import {
@@ -61,10 +62,13 @@ import type { AppConfig, Provider, ReadmeDetail, ReadmeStyle } from "./types.js"
 export function createCLI(): Command {
   const program = new Command();
 
+  const pkgPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+  const pkgVersion: string = JSON.parse(fs.readFileSync(pkgPath, "utf8")).version;
+
   program
     .name("claude-ship")
     .description("Ship Claude-generated projects to GitHub in seconds")
-    .version("1.0.0");
+    .version(pkgVersion);
 
   // ── ship (default) ─────────────────────────────────────────────────────────
   program
