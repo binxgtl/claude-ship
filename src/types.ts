@@ -40,7 +40,7 @@ export type GitignorePreset =
   | "cpp"
   | "generic";
 
-export type Provider = "anthropic" | "gemini";
+export type Provider = "anthropic" | "gemini" | "openai" | "ollama";
 
 export type ReadmeDetail = "short" | "normal" | "large" | "carefully";
 
@@ -76,6 +76,7 @@ export interface AppConfig {
   // ── Encrypted secrets ────────────────────────────────────────────────────
   anthropicApiKey?: string;
   geminiApiKey?: string;
+  openaiApiKey?: string;
   githubToken?: string;
   // ── Plain settings ────────────────────────────────────────────────────────
   defaultProvider?: Provider;
@@ -115,6 +116,12 @@ export interface AppConfig {
   defaultReadmeStyle?: ReadmeStyle;
   /** Max tokens for README generation. 0 = use provider maximum. Default per detail level. */
   maxReadmeTokens?: number;
+  /** Ollama base URL (default: http://localhost:11434) */
+  ollamaBaseUrl?: string;
+  /** Ollama model name (default: llama3.1) */
+  ollamaModel?: string;
+  /** OpenAI model name (default: gpt-5.4) */
+  openaiModel?: string;
 }
 
 export interface ShipConfig {

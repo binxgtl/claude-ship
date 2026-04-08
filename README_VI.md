@@ -29,6 +29,18 @@ npx @binxgodteli/claude-ship init
 
 # Tạo CHANGELOG từ git history
 npx @binxgodteli/claude-ship changelog
+
+# Đăng nhập OpenAI (miễn phí qua gói ChatGPT)
+npx @binxgodteli/claude-ship login
+
+# Xử lý hàng loạt nhiều file Claude response
+npx @binxgodteli/claude-ship batch ./responses/
+
+# Tạo commit message bằng AI từ staged changes
+npx @binxgodteli/claude-ship commit
+
+# Bump version + changelog + GitHub Release
+npx @binxgodteli/claude-ship release --bump minor
 ```
 
 Không cần cài đặt phức tạp. `claude-ship` tự động tìm GitHub token từ `gh` CLI, biến môi trường `GITHUB_TOKEN`, hoặc config đã lưu.
@@ -52,16 +64,24 @@ claude-ship --help
 
 - **Phân tích output Claude** — trích xuất file từ các code block và thẻ `<antArtifact>`
 - **Tự động tạo cấu trúc project** — ghi file, tạo `.gitignore` phù hợp với tech stack được phát hiện
-- **Tạo README bằng AI** — hỗ trợ Anthropic Claude và Google Gemini; 4 mức độ chi tiết, 3 tone, hỗ trợ tiếng Việt; streaming output, AI tự đánh giá chất lượng, fallback nhiều provider, và bảo toàn các section tùy chỉnh khi regenerate
+- **4 AI provider** — Anthropic (Claude Sonnet 4.6), Google Gemini (3 Flash), OpenAI (GPT-5.4 qua Codex OAuth hoặc API key), và Ollama (model local)
+- **Tạo README bằng AI** — 4 mức độ chi tiết, 3 tone, hỗ trợ tiếng Việt; streaming output, AI tự đánh giá chất lượng, fallback nhiều provider, và bảo toàn các section tùy chỉnh khi regenerate
+- **OpenAI Codex OAuth** — lệnh `login` xác thực qua browser bằng gói ChatGPT (miễn phí, không cần API key); model tùy chọn (gpt-5.4, gpt-5.4-mini, gpt-5.3-codex)
 - **Tích hợp GitHub** — tạo repo (cá nhân hoặc org, public hoặc private) qua Octokit; xử lý force-push tương tác
 - **Push project có sẵn** — không cần output Claude; tự tạo repo nếu chưa có
 - **Template project** — lệnh `init` tạo project mới từ 6 template (Node.js, React, Next.js, Express, FastAPI, CLI Tool)
 - **AI changelog** — lệnh `changelog` tạo CHANGELOG.md từ git history bằng AI
+- **Xử lý hàng loạt** — lệnh `batch` xử lý nhiều file Claude response thành các project riêng biệt
+- **AI commit message** — lệnh `commit` đọc `git diff` staged, tạo commit message theo conventional commits, cho phép xem/sửa/tạo lại trước khi commit
+- **Quản lý release** — lệnh `release` bump version, tạo changelog, tạo git tag, và publish GitHub Release
+- **Tạo Docker** — flag `--docker` tạo `Dockerfile` và `docker-compose.yml` (multi-stage build cho Node/Python/Rust/Go)
+- **Tạo `.env.example`** — flag `--env-example` phát hiện biến môi trường và tạo template `.env.example`
+- **Pre-commit hooks** — flag `--hooks` tạo cấu hình husky + lint-staged
 - **GitHub Actions CI** — tự động tạo `.github/workflows/ci.yml` với flag `--ci` (Node.js, Python, Rust, Go)
 - **Hỗ trợ monorepo** — phát hiện npm/pnpm/yarn workspaces và đưa thông tin package vào README
 - **Preview & diff** — `readme --preview` để xem trước; `push --diff` để xem tóm tắt thay đổi trước khi push
 - **Chế độ dry-run** — xem trước tất cả thao tác mà không ghi file hay gọi API
-- **Config mã hóa** — API key và token được lưu với AES-256-CBC tại `~/.claudeship/config.json`
+- **Config mã hóa** — API key và token được lưu với AES-256-GCM tại `~/.claudeship/config.json` (key gắn với máy)
 - **Hỗ trợ SSH/HTTPS** — cấu hình theo từng project hoặc toàn cục
 
 ---
@@ -91,7 +111,7 @@ npx @binxgodteli/claude-ship ship --file ./output.txt --name my-project -d
 | `--private` | Tạo GitHub repo private |
 | `--no-readme` | Bỏ qua việc tạo README bằng AI |
 | `--vi` | Tạo README bằng tiếng Việt |
-| `--provider <name>` | AI provider: `anthropic` hoặc `gemini` |
+| `--provider <name>` | AI provider: `anthropic`, `gemini`, `openai`, hoặc `ollama` |
 | `--api-key <key>` | API key cho provider đã chọn |
 | `--detail <level>` | Mức chi tiết README: `short`, `normal`, `large`, `carefully` |
 | `--style <style>` | Tone README: `practical`, `balanced` (mặc định), `marketing` |
@@ -101,6 +121,9 @@ npx @binxgodteli/claude-ship ship --file ./output.txt --name my-project -d
 | `--branch <name>` | Tên branch (mặc định: `main`) |
 | `--no-push` | Chỉ tạo file local, không push lên GitHub |
 | `--ci` | Tạo GitHub Actions CI workflow |
+| `--docker` | Tạo `Dockerfile` và `docker-compose.yml` |
+| `--env-example` | Tạo `.env.example` từ biến môi trường được phát hiện |
+| `--hooks` | Tạo pre-commit hooks (husky + lint-staged) |
 | `-d, --dry-run` | Xem trước — không ghi file, không gọi API |
 
 ---
@@ -128,7 +151,7 @@ npx @binxgodteli/claude-ship push --org my-org --private --no-readme
 | `--private` | Tạo repo private |
 | `--no-readme` | Bỏ qua việc tạo lại README |
 | `--vi` | Tạo README bằng tiếng Việt |
-| `--provider <name>` | AI provider: `anthropic` hoặc `gemini` |
+| `--provider <name>` | AI provider: `anthropic`, `gemini`, `openai`, hoặc `ollama` |
 | `--api-key <key>` | API key cho provider đã chọn |
 | `--detail <level>` | Mức chi tiết README: `short`, `normal`, `large`, `carefully` |
 | `--style <style>` | Tone: `practical`, `balanced`, `marketing` |
@@ -139,6 +162,9 @@ npx @binxgodteli/claude-ship push --org my-org --private --no-readme
 | `--message <msg>` | Nội dung commit (mặc định: `🚀 Update via claude-ship`) |
 | `--diff` | Hiện tóm tắt thay đổi và xác nhận trước khi push |
 | `--ci` | Tạo GitHub Actions CI workflow |
+| `--docker` | Tạo `Dockerfile` và `docker-compose.yml` |
+| `--env-example` | Tạo `.env.example` từ biến môi trường |
+| `--hooks` | Tạo pre-commit hooks (husky + lint-staged) |
 
 ---
 
@@ -157,7 +183,7 @@ npx @binxgodteli/claude-ship readme --preview
 | Flag | Mô tả |
 | :--- | :---- |
 | `--dir <path>` | Thư mục project (mặc định: thư mục hiện tại) |
-| `--provider <name>` | AI provider: `anthropic` (mặc định) hoặc `gemini` |
+| `--provider <name>` | AI provider: `anthropic` (mặc định), `gemini`, `openai`, hoặc `ollama` |
 | `--api-key <key>` | API key cho provider đã chọn |
 | `--vi` | Tạo bằng tiếng Việt |
 | `--detail <level>` | Mức chi tiết: `short`, `normal`, `large`, `carefully` |
@@ -203,7 +229,7 @@ npx @binxgodteli/claude-ship changelog --count 50
 | Flag | Mô tả |
 | :--- | :---- |
 | `--dir <path>` | Thư mục project (mặc định: thư mục hiện tại) |
-| `--provider <name>` | AI provider: `anthropic` hoặc `gemini` |
+| `--provider <name>` | AI provider: `anthropic`, `gemini`, `openai`, hoặc `ollama` |
 | `--api-key <key>` | API key cho provider đã chọn |
 | `--count <n>` | Số commit tối đa (mặc định: 100) |
 
@@ -221,12 +247,94 @@ npx @binxgodteli/claude-ship update --dir ./my-project --vi
 | Flag | Mô tả |
 | :--- | :---- |
 | `--dir <path>` | Thư mục project (mặc định: thư mục hiện tại) |
-| `--provider <name>` | AI provider: `anthropic` hoặc `gemini` |
+| `--provider <name>` | AI provider: `anthropic`, `gemini`, `openai`, hoặc `ollama` |
 | `--api-key <key>` | API key cho provider đã chọn |
 | `--vi` | Tạo README bằng tiếng Việt |
 | `--detail <level>` | Mức chi tiết: `short`, `normal`, `large`, `carefully` |
 | `--style <style>` | Tone: `practical`, `balanced`, `marketing` |
 | `--max-tokens <n>` | Số token tối đa cho README |
+
+---
+
+### `commit` — Tạo commit message bằng AI
+
+Tạo commit message từ staged changes bằng AI. Hỗ trợ xem trước, chỉnh sửa, và tạo lại trước khi commit.
+
+```bash
+# Tạo message từ staged changes
+npx @binxgodteli/claude-ship commit
+
+# Stage tất cả + commit + push một lần
+npx @binxgodteli/claude-ship commit -a -p
+
+# Bỏ qua xác nhận (phù hợp CI)
+npx @binxgodteli/claude-ship commit -a -y
+```
+
+| Flag | Mô tả |
+| :--- | :---- |
+| `--dir <path>` | Thư mục project (mặc định: thư mục hiện tại) |
+| `--provider <name>` | AI provider: `anthropic`, `gemini`, `openai`, hoặc `ollama` |
+| `--api-key <key>` | API key cho provider đã chọn |
+| `-a, --all` | Stage tất cả thay đổi trước khi commit |
+| `-p, --push` | Push lên remote sau khi commit |
+| `-y, --yes` | Bỏ qua xác nhận, commit ngay |
+
+---
+
+### `login` — Xác thực với OpenAI
+
+Đăng nhập bằng tài khoản ChatGPT qua OAuth để sử dụng model OpenAI miễn phí (không cần API key).
+
+```bash
+npx @binxgodteli/claude-ship login
+```
+
+Mở browser để xác thực OpenAI. Token được lưu tại `~/.claudeship/openai-auth.json` và tự động sử dụng khi `--provider openai`. Cũng đọc được token từ `~/.codex/auth.json` (tạo bởi `npx @openai/codex login`) như fallback.
+
+---
+
+### `batch` — Xử lý hàng loạt
+
+Xử lý nhiều file Claude response từ một thư mục thành các project riêng biệt.
+
+```bash
+npx @binxgodteli/claude-ship batch ./responses/
+npx @binxgodteli/claude-ship batch ./responses/ --private --ci --docker
+```
+
+| Flag | Mô tả |
+| :--- | :---- |
+| `<dir>` | Thư mục chứa file `.txt` hoặc `.md` với Claude response |
+| `--token <token>` | GitHub personal access token |
+| `--private` | Tạo repo private |
+| `--no-push` | Chỉ tạo file local, không push lên GitHub |
+| `--provider <name>` | AI provider cho việc tạo README |
+| `--api-key <key>` | API key cho provider đã chọn |
+| `--out <dir>` | Thư mục đầu ra (mặc định: thư mục hiện tại) |
+| `--ci` | Tạo GitHub Actions CI workflow |
+| `--docker` | Tạo Dockerfile và docker-compose.yml |
+
+---
+
+### `release` — Bump version + GitHub Release
+
+Bump version trong `package.json`, tạo changelog, tạo git tag, push, và tạo GitHub Release.
+
+```bash
+npx @binxgodteli/claude-ship release
+npx @binxgodteli/claude-ship release --bump minor
+npx @binxgodteli/claude-ship release --bump major --draft
+```
+
+| Flag | Mô tả |
+| :--- | :---- |
+| `--dir <path>` | Thư mục project (mặc định: thư mục hiện tại) |
+| `--bump <type>` | Loại bump: `patch` (mặc định), `minor`, `major` |
+| `--token <token>` | GitHub personal access token |
+| `--provider <name>` | AI provider cho changelog |
+| `--api-key <key>` | API key cho provider đã chọn |
+| `--draft` | Tạo draft release |
 
 ---
 
@@ -253,13 +361,16 @@ Cài đặt được lưu tại `~/.claudeship/config.json`. Quản lý qua `cla
 | Biến | Mô tả |
 | :--- | :---- |
 | `GITHUB_TOKEN` / `GH_TOKEN` | GitHub Personal Access Token |
+| `ANTHROPIC_API_KEY` | API key Anthropic |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | API key Google Gemini |
+| `OPENAI_API_KEY` | API key OpenAI (hoặc dùng `claude-ship login` cho OAuth) |
 | `CLAUDE_SHIP_CLIENT_ID` | GitHub OAuth App client ID cho device flow |
 
 ### Các trường trong config
 
 | Trường | Mô tả | Mặc định |
 | :----- | :---- | :------- |
-| `defaultProvider` | AI provider (`anthropic` hoặc `gemini`) | `anthropic` |
+| `defaultProvider` | AI provider (`anthropic`, `gemini`, `openai`, `ollama`) | `anthropic` |
 | `defaultPrivate` | Độ hiển thị repo | `false` |
 | `githubUsername` | GitHub username | `""` |
 | `defaultOrg` | GitHub organization | `""` |
@@ -274,8 +385,11 @@ Cài đặt được lưu tại `~/.claudeship/config.json`. Quản lý qua `cla
 | `gitExcludePatterns` | Glob patterns loại khỏi Git commit | `[]` |
 | `aiExcludePatterns` | File không gửi cho AI (`.env*`, `*.key`, v.v.) | `[]` |
 | `readmeExcludePatterns` | File loại khỏi context README | `[]` |
+| `openaiModel` | Tên model OpenAI | `gpt-5.4` |
+| `ollamaBaseUrl` | URL server Ollama | `http://localhost:11434` |
+| `ollamaModel` | Tên model Ollama | `llama3.1` |
 
-Các trường được mã hóa: `anthropicApiKey`, `geminiApiKey`, `githubToken` (AES-256-CBC).
+Các trường được mã hóa: `anthropicApiKey`, `geminiApiKey`, `openaiApiKey`, `githubToken` (AES-256-GCM, key gắn với máy).
 
 ---
 

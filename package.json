@@ -1,6 +1,6 @@
 {
   "name": "@binxgodteli/claude-ship",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Ship Claude-generated projects to GitHub in seconds — parse, scaffold, and publish with one command.",
   "keywords": [
     "claude",
@@ -45,6 +45,7 @@
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "inquirer": "^10.2.2",
+    "open": "^11.0.0",
     "ora": "^8.1.1",
     "simple-git": "^3.27.0"
   },

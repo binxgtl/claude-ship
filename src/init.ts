@@ -7,6 +7,8 @@ import { writeFile, writeLicenseFile } from "./scaffold.js";
 import { printSuccess, printInfo, printWarning, c } from "./ui.js";
 import { loadConfig } from "./config.js";
 import { generateCiWorkflow } from "./ci-generator.js";
+import { generateDockerfile, generateDockerCompose } from "./docker-generator.js";
+import { generateHooksConfig } from "./hooks-generator.js";
 
 interface StackTemplate {
   label: string;
@@ -386,12 +388,20 @@ export async function runInit(): Promise<void> {
 
   const template = TEMPLATES.find((t) => t.value === templateValue)!;
 
-  const { addCi } = await inquirer.prompt<{ addCi: boolean }>([{
-    type: "confirm",
-    name: "addCi",
-    message: "Generate GitHub Actions CI workflow?",
-    default: true,
+  const { extras } = await inquirer.prompt<{ extras: string[] }>([{
+    type: "checkbox",
+    name: "extras",
+    message: "Add extras:",
+    choices: [
+      { name: "GitHub Actions CI workflow", value: "ci", checked: true },
+      { name: "Dockerfile + docker-compose", value: "docker" },
+      { name: "Pre-commit hooks (husky + lint-staged)", value: "hooks" },
+    ],
   }]);
+
+  const addCi = extras.includes("ci");
+  const addDocker = extras.includes("docker");
+  const addHooks = extras.includes("hooks");
 
   const outputDir = path.resolve(process.cwd(), projectName);
 
@@ -428,9 +438,34 @@ export async function runInit(): Promise<void> {
     printSuccess("GitHub Actions CI workflow generated");
   }
 
+  if (addDocker) {
+    const dockerOpts = { gitignorePreset: template.gitignore, packageManager: template.packageManager };
+    writeFile(outputDir, "Dockerfile", generateDockerfile(dockerOpts));
+    writeFile(outputDir, "docker-compose.yml", generateDockerCompose(dockerOpts));
+    printSuccess("Dockerfile and docker-compose.yml generated");
+  }
+
+  if (addHooks) {
+    const hooksResult = generateHooksConfig({
+      gitignorePreset: template.gitignore,
+      packageManager: template.packageManager,
+      hasLint: true, hasFormat: false, hasTypecheck: false,
+    });
+    if (hooksResult) {
+      writeFile(outputDir, ".husky/pre-commit", hooksResult.huskyPreCommit);
+      if (Object.keys(hooksResult.lintStagedConfig).length > 0) {
+        writeFile(outputDir, ".lintstagedrc.json", JSON.stringify(hooksResult.lintStagedConfig, null, 2) + "\n");
+      }
+      printSuccess("Pre-commit hooks generated");
+    }
+  }
+
   writeLicenseFile(outputDir, cfg.defaultLicense ?? "MIT", cfg.projectAuthor ?? cfg.githubUsername);
 
-  const fileCount = template.files.length + 1 + (addCi ? 1 : 0);
+  let fileCount = template.files.length + 1;
+  if (addCi) fileCount++;
+  if (addDocker) fileCount += 2;
+  if (addHooks) fileCount += 2;
   printSuccess(`Scaffolded ${c.bold(String(fileCount))} files in ${c.path(outputDir)}`);
   printInfo(`Next: cd ${projectName} && ${template.packageManager} install`);
 }

@@ -8,6 +8,8 @@ import {
 import { spinner, c, printSeparator } from "./ui.js";
 import type { AppConfig, Provider, ReadmeDetail, LicenseType, ReadmeSections } from "./types.js";
 import { licenseLabel } from "./readme.js";
+import { findCodexAuthFile } from "./providers.js";
+import { runOpenAILogin } from "./openai-login.js";
 
 // ─── Screen helpers ───────────────────────────────────────────────────────────
 
@@ -71,14 +73,26 @@ function renderAiKeys(cfg: AppConfig): void {
     ? c.success("● Saved    ") + c.dim(maskKey(cfg.geminiApiKey))
     : c.dim("○ Not set");
 
-  console.log("  " + c.bold("Anthropic API Key") + c.dim("  (Claude 3.5 Sonnet)"));
+  const hasCodexOAuth = Boolean(findCodexAuthFile());
+  const openaiKeyStatus = cfg.openaiApiKey
+    ? c.success("● API Key  ") + c.dim(maskKey(cfg.openaiApiKey))
+    : c.dim("○ No API key");
+  const openaiOAuthStatus = hasCodexOAuth
+    ? c.success("● OAuth    ") + c.dim("Codex tokens found")
+    : c.dim("○ No OAuth tokens");
+
+  console.log("  " + c.bold("Anthropic API Key") + c.dim("  (Claude Sonnet 4.6)"));
   console.log("  " + anthropicStatus);
   console.log();
-  console.log("  " + c.bold("Gemini API Key") + c.dim("  (2.5 Flash Lite — free tier)"));
+  console.log("  " + c.bold("Gemini API Key") + c.dim("  (Gemini 3 Flash — free tier)"));
   console.log("  " + geminiStatus);
   console.log();
+  console.log("  " + c.bold("OpenAI") + c.dim(`  (${cfg.openaiModel ?? "gpt-5.4"})`));
+  console.log("  " + openaiKeyStatus);
+  console.log("  " + openaiOAuthStatus);
+  console.log();
   console.log(
-    c.dim("  Keys are AES-256-CBC encrypted, bound to this machine.")
+    c.dim("  Keys are AES-256-GCM encrypted, bound to this machine.")
   );
   console.log(c.dim("  Stored at: " + configFilePath()));
   console.log();
@@ -118,8 +132,10 @@ function renderDefaults(cfg: AppConfig): void {
   const detail = cfg.defaultReadmeDetail ?? "normal";
 
   console.log("  " + c.bold("Default AI Provider"));
-  console.log("  " + c.info(provider === "anthropic" ? "● Anthropic (Claude 3.5 Sonnet)" : "○ Anthropic") );
-  console.log("  " + c.info(provider === "gemini"    ? "● Gemini (2.5 Flash Lite — free)" : "○ Gemini") );
+  console.log("  " + c.info(provider === "anthropic" ? "● Anthropic (Claude Sonnet 4.6)" : "○ Anthropic") );
+  console.log("  " + c.info(provider === "gemini"    ? "● Gemini (3 Flash — free)" : "○ Gemini") );
+  console.log("  " + c.info(provider === "openai"    ? `● OpenAI (${cfg.openaiModel ?? "gpt-5.4"})` : "○ OpenAI") );
+  console.log("  " + c.info(provider === "ollama"    ? "● Ollama (local)" : "○ Ollama") );
   console.log();
   console.log("  " + c.bold("Default Repository Visibility"));
   console.log("  " + (cfg.defaultPrivate ? c.warn("🔒 Private") : c.success("🌐 Public")));
@@ -232,6 +248,11 @@ function aiKeyChoices(cfg: AppConfig): Choice[] {
     sep(),
     { name: cfg.geminiApiKey ? "✏  Edit Gemini key" : "＋ Add Gemini key", value: "edit:gemini" },
     ...(cfg.geminiApiKey ? [{ name: "✕  Clear Gemini key", value: "clear:gemini" }] : []),
+    sep(),
+    { name: "🌐 Login with OpenAI (OAuth via browser)", value: "openai:oauth-login" },
+    { name: cfg.openaiApiKey ? "✏  Edit OpenAI API key (manual)" : "＋ Add OpenAI API key (manual)", value: "edit:openai" },
+    ...(cfg.openaiApiKey ? [{ name: "✕  Clear OpenAI API key", value: "clear:openai" }] : []),
+    { name: `✏  OpenAI model: ${cfg.openaiModel ?? "gpt-5.4"}`, value: "set:openai-model" },
     sep("─── navigate"),
     { name: "→  GitHub tab", value: "__tab:github" },
     { name: "→  Defaults tab", value: "__tab:defaults" },
@@ -266,9 +287,12 @@ function githubChoices(cfg: AppConfig): Choice[] {
   ];
 }
 
+const PROVIDER_ORDER: Provider[] = ["anthropic", "gemini", "openai", "ollama"];
+
 function defaultChoices(cfg: AppConfig): Choice[] {
   const provider = cfg.defaultProvider ?? "anthropic";
-  const nextProvider: Provider = provider === "anthropic" ? "gemini" : "anthropic";
+  const idx = PROVIDER_ORDER.indexOf(provider);
+  const nextProvider = PROVIDER_ORDER[(idx + 1) % PROVIDER_ORDER.length]!;
   const detail = cfg.defaultReadmeDetail ?? "normal";
   return [
     {
@@ -319,23 +343,24 @@ function filesChoices(cfg: AppConfig): Choice[] {
 
 // ─── Action handlers ──────────────────────────────────────────────────────────
 
-async function handleEditKey(field: "anthropic" | "gemini"): Promise<void> {
-  const label = field === "anthropic" ? "Anthropic" : "Gemini";
-  const envVar = field === "anthropic" ? "ANTHROPIC_API_KEY" : "GEMINI_API_KEY";
-  const consoleUrl =
-    field === "anthropic"
-      ? "https://console.anthropic.com"
-      : "https://aistudio.google.com/app/apikey";
+const KEY_META: Record<string, { label: string; envVar: string; consoleUrl: string; configKey: keyof AppConfig }> = {
+  anthropic: { label: "Anthropic", envVar: "ANTHROPIC_API_KEY", consoleUrl: "https://console.anthropic.com", configKey: "anthropicApiKey" },
+  gemini: { label: "Gemini", envVar: "GEMINI_API_KEY", consoleUrl: "https://aistudio.google.com/app/apikey", configKey: "geminiApiKey" },
+  openai: { label: "OpenAI", envVar: "OPENAI_API_KEY", consoleUrl: "https://platform.openai.com/api-keys", configKey: "openaiApiKey" },
+};
+
+async function handleEditKey(field: "anthropic" | "gemini" | "openai"): Promise<void> {
+  const meta = KEY_META[field]!;
 
   console.log();
-  console.log(c.dim(`  Get your key at: ${consoleUrl}`));
-  console.log(c.dim(`  Or set ${envVar} env var to skip this.\n`));
+  console.log(c.dim(`  Get your key at: ${meta.consoleUrl}`));
+  console.log(c.dim(`  Or set ${meta.envVar} env var to skip this.\n`));
 
   const { key } = await inquirer.prompt<{ key: string }>([
     {
       type: "password",
       name: "key",
-      message: `${label} API key:`,
+      message: `${meta.label} API key:`,
       mask: "*",
     },
   ]);
@@ -345,15 +370,15 @@ async function handleEditKey(field: "anthropic" | "gemini"): Promise<void> {
     return;
   }
 
-  const configKey = field === "anthropic" ? "anthropicApiKey" : "geminiApiKey";
-  mergeConfig({ [configKey]: key.trim() } as Partial<AppConfig>);
-  console.log(c.success(`\n  ✔ ${label} key saved.`));
+  mergeConfig({ [meta.configKey]: key.trim() } as Partial<AppConfig>);
+  console.log(c.success(`\n  ✔ ${meta.label} key saved.`));
   await pause();
 }
 
-async function handleClearKey(field: "anthropic" | "gemini"): Promise<void> {
-  const label = field === "anthropic" ? "Anthropic" : "Gemini";
-  const configKey = field === "anthropic" ? "anthropicApiKey" : "geminiApiKey";
+async function handleClearKey(field: "anthropic" | "gemini" | "openai"): Promise<void> {
+  const meta = KEY_META[field]!;
+  const label = meta.label;
+  const configKey = meta.configKey;
 
   const { confirm } = await inquirer.prompt<{ confirm: boolean }>([
     {
@@ -369,6 +394,36 @@ async function handleClearKey(field: "anthropic" | "gemini"): Promise<void> {
     console.log(c.success(`\n  ✔ ${label} key cleared.`));
     await pause();
   }
+}
+
+const OPENAI_MODELS = [
+  "gpt-5.4",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex",
+];
+
+async function handleSetOpenAIModel(): Promise<void> {
+  const cfg = loadConfig();
+  const current = cfg.openaiModel ?? "gpt-5.4";
+  const choices = [
+    ...OPENAI_MODELS.map((m) => ({ name: m === current ? `${m} (current)` : m, value: m })),
+    { name: "Custom…", value: "__custom__" },
+  ];
+  const { model } = await inquirer.prompt<{ model: string }>([
+    { type: "list", name: "model", message: "Select OpenAI model:", choices },
+  ]);
+  let final = model;
+  if (model === "__custom__") {
+    const { custom } = await inquirer.prompt<{ custom: string }>([
+      { type: "input", name: "custom", message: "Enter model name:", default: current },
+    ]);
+    final = custom.trim();
+  }
+  if (final) {
+    mergeConfig({ openaiModel: final });
+    console.log(c.success(`\n  ✔ OpenAI model set to ${final}`));
+  }
+  await pause();
 }
 
 async function handleGitHubPat(): Promise<void> {
@@ -859,8 +914,12 @@ export async function runConfigUI(): Promise<void> {
     // AI key actions
     if (action === "edit:anthropic") await handleEditKey("anthropic");
     else if (action === "edit:gemini") await handleEditKey("gemini");
+    else if (action === "edit:openai") await handleEditKey("openai");
     else if (action === "clear:anthropic") await handleClearKey("anthropic");
     else if (action === "clear:gemini") await handleClearKey("gemini");
+    else if (action === "clear:openai") await handleClearKey("openai");
+    else if (action === "set:openai-model") await handleSetOpenAIModel();
+    else if (action === "openai:oauth-login") { await runOpenAILogin(); await pause(); }
     // GitHub actions
     else if (action === "github:pat") await handleGitHubPat();
     else if (action === "github:oauth") await handleGitHubOAuth();

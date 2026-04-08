@@ -52,6 +52,7 @@ function decrypt(ciphertext: string): string {
 const ENCRYPTED_FIELDS: (keyof AppConfig)[] = [
   "anthropicApiKey",
   "geminiApiKey",
+  "openaiApiKey",
   "githubToken",
 ];
 
@@ -76,6 +77,9 @@ const PLAIN_FIELDS: (keyof AppConfig)[] = [
   "defaultVi",
   "defaultReadmeStyle",
   "maxReadmeTokens",
+  "ollamaBaseUrl",
+  "ollamaModel",
+  "openaiModel",
 ];
 
 interface StoredConfig {
@@ -155,17 +159,36 @@ export function clearConfigField(field: keyof AppConfig): void {
 
 /** Resolve an AI API key: flag → env → saved config */
 export function resolveApiKey(
-  provider: "anthropic" | "gemini",
+  provider: "anthropic" | "gemini" | "openai" | "ollama",
   flagValue?: string
 ): string | undefined {
   if (flagValue) return flagValue;
+  const cfg = loadConfig();
   if (provider === "anthropic") {
-    return process.env["ANTHROPIC_API_KEY"] ?? loadConfig().anthropicApiKey;
+    return process.env["ANTHROPIC_API_KEY"] ?? cfg.anthropicApiKey;
+  }
+  if (provider === "openai") {
+    const key = process.env["OPENAI_API_KEY"] ?? cfg.openaiApiKey;
+    if (key) return key;
+    const codexCandidates = [
+      path.join(os.homedir(), ".claudeship", "openai-auth.json"),
+      process.env["CHATGPT_LOCAL_HOME"] && path.join(process.env["CHATGPT_LOCAL_HOME"], "auth.json"),
+      process.env["CODEX_HOME"] && path.join(process.env["CODEX_HOME"], "auth.json"),
+      path.join(os.homedir(), ".chatgpt-local", "auth.json"),
+      path.join(os.homedir(), ".codex", "auth.json"),
+    ];
+    for (const p of codexCandidates) {
+      if (p && fs.existsSync(p)) return "codex-oauth";
+    }
+    return undefined;
+  }
+  if (provider === "ollama") {
+    return "ollama";
   }
   return (
     process.env["GEMINI_API_KEY"] ??
     process.env["GOOGLE_API_KEY"] ??
-    loadConfig().geminiApiKey
+    cfg.geminiApiKey
   );
 }
 

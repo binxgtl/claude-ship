@@ -415,6 +415,14 @@ function detectEnvVars(files: ParsedFile[]): string[] {
   return Array.from(vars).sort();
 }
 
+// ─── Env example generator ───────────────────────────────────────────────────
+
+export function generateEnvExample(files: ParsedFile[]): string | null {
+  const vars = detectEnvVars(files);
+  if (vars.length === 0) return null;
+  return vars.map((v) => `${v}=`).join("\n") + "\n";
+}
+
 // ─── Package manager resolver ─────────────────────────────────────────────────
 
 function resolvePackageManager(configFileName: string, cliScripts: string): string {
