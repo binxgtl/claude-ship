@@ -23,7 +23,7 @@ import { generateDockerfile, generateDockerCompose } from "../docker-generator.j
 import { generateHooksConfig } from "../hooks-generator.js";
 import {
   resolveTokenAndUsername, validateProvider, resolveFallback,
-  printQuality, resolveMaxTokens, resolveDetail, resolveStyle, ensureApiKey,
+  printQuality, resolveMaxTokens, resolveDetail, resolveStyle, resolveProviderWithKey,
 } from "../cli-helpers.js";
 
 export interface ShipOptions {
@@ -53,7 +53,7 @@ export interface ShipOptions {
 export async function runShip(opts: ShipOptions) {
   await printBanner();
 
-  const provider = validateProvider(opts.provider ?? resolveDefaultProvider());
+  let provider = validateProvider(opts.provider ?? resolveDefaultProvider());
 
   let claudeResponse: string;
   if (opts.file) {
@@ -158,7 +158,8 @@ export async function runShip(opts: ShipOptions) {
 
   let apiKey: string | undefined;
   if (opts.readme) {
-    apiKey = await ensureApiKey(provider, opts.apiKey);
+    const resolved = await resolveProviderWithKey(provider, opts.apiKey);
+    if (resolved) { provider = resolved.provider; apiKey = resolved.apiKey; }
   }
 
   const cfg = loadConfig();

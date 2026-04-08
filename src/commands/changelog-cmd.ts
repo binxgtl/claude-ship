@@ -4,7 +4,7 @@ import { resolveDefaultProvider } from "../config.js";
 import { providerLabel, providerEnvVar } from "../providers.js";
 import { printBanner, printSuccess, spinner, c } from "../ui.js";
 import { generateChangelog } from "../changelog.js";
-import { validateProvider, ensureApiKey } from "../cli-helpers.js";
+import { validateProvider, resolveProviderWithKey } from "../cli-helpers.js";
 
 export interface ChangelogRunOptions {
   dir: string;
@@ -16,14 +16,16 @@ export interface ChangelogRunOptions {
 export async function runChangelog(opts: ChangelogRunOptions) {
   await printBanner();
   const dir = fs.realpathSync(path.resolve(opts.dir));
-  const provider = validateProvider(opts.provider ?? resolveDefaultProvider());
-  const apiKey = await ensureApiKey(provider, opts.apiKey);
-  if (!apiKey) {
+  let provider = validateProvider(opts.provider ?? resolveDefaultProvider());
+  const resolved = await resolveProviderWithKey(provider, opts.apiKey);
+  if (!resolved) {
     throw new Error(
       `API key required for changelog generation.\n` +
         `Set ${providerEnvVar(provider)} or run: claude-ship config`
     );
   }
+  provider = resolved.provider;
+  const apiKey = resolved.apiKey;
 
   const count = opts.count ? parseInt(opts.count, 10) : 100;
   const label = providerLabel(provider);

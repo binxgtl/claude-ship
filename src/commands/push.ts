@@ -21,7 +21,7 @@ import { generateDockerfile, generateDockerCompose } from "../docker-generator.j
 import { generateHooksConfig } from "../hooks-generator.js";
 import {
   validateProvider, resolveFallback, printQuality,
-  resolveMaxTokens, resolveDetail, resolveStyle, ensureApiKey,
+  resolveMaxTokens, resolveDetail, resolveStyle, resolveProviderWithKey,
 } from "../cli-helpers.js";
 import { generateText } from "../providers.js";
 import { simpleGit } from "simple-git";
@@ -72,8 +72,12 @@ export async function runPush(opts: PushOptions) {
 
   printInfo(`Project: ${c.bold(projectName)}  |  Dir: ${c.path(dir)}`);
 
-  const provider = validateProvider(opts.provider ?? resolveDefaultProvider());
-  const apiKey = (opts.readme || opts.aiCommit) ? await ensureApiKey(provider, opts.apiKey) : undefined;
+  let provider = validateProvider(opts.provider ?? resolveDefaultProvider());
+  let apiKey: string | undefined;
+  if (opts.readme || opts.aiCommit) {
+    const resolved = await resolveProviderWithKey(provider, opts.apiKey);
+    if (resolved) { provider = resolved.provider; apiKey = resolved.apiKey; }
+  }
 
   if (opts.readme) {
     if (!apiKey) {

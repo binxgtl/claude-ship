@@ -11,7 +11,7 @@ import { providerLabel } from "../providers.js";
 import { printBanner, printSuccess, printWarning, printInfo, spinner, c } from "../ui.js";
 import {
   validateProvider, resolveFallback, printQuality,
-  resolveMaxTokens, resolveDetail, resolveStyle, ensureApiKey,
+  resolveMaxTokens, resolveDetail, resolveStyle, resolveProviderWithKey,
 } from "../cli-helpers.js";
 
 export interface UpdateRunOptions {
@@ -28,7 +28,7 @@ export async function runUpdate(opts: UpdateRunOptions) {
   await printBanner();
   const dir = fs.realpathSync(path.resolve(opts.dir));
   const cfg = loadConfig();
-  const provider = validateProvider(opts.provider ?? resolveDefaultProvider());
+  let provider = validateProvider(opts.provider ?? resolveDefaultProvider());
 
   const allPaths = getAllFilePaths(dir);
   const aiFiltered = filterFilesForAI(allPaths, cfg.aiExcludePatterns);
@@ -62,11 +62,13 @@ export async function runUpdate(opts: UpdateRunOptions) {
     if (pkg.description) description = pkg.description;
   } catch { /* no package.json */ }
 
-  const apiKey = await ensureApiKey(provider, opts.apiKey);
-  if (!apiKey) {
+  const resolved = await resolveProviderWithKey(provider, opts.apiKey);
+  if (!resolved) {
     printWarning("No API key — can only show detection results. Run `claude-ship config` to enable AI generation.");
     return;
   }
+  provider = resolved.provider;
+  const apiKey = resolved.apiKey;
 
   const isVi = opts.vi || (cfg.defaultVi ?? false);
   const detail = resolveDetail(opts.detail, cfg);

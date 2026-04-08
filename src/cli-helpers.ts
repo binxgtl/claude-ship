@@ -75,31 +75,81 @@ export function resolveStyle(flag: string | undefined, cfg: AppConfig): ReadmeSt
   throw new Error(`Unknown style "${flag}". Use: practical, balanced, marketing.`);
 }
 
+export interface ResolvedProvider {
+  provider: Provider;
+  apiKey: string;
+}
+
 export async function ensureApiKey(
   provider: Provider,
   flagValue?: string
 ): Promise<string | undefined> {
-  if (provider === "ollama") return "ollama";
+  const result = await resolveProviderWithKey(provider, flagValue);
+  return result?.apiKey;
+}
+
+export async function resolveProviderWithKey(
+  provider: Provider,
+  flagValue?: string
+): Promise<ResolvedProvider | undefined> {
+  if (provider === "ollama") return { provider, apiKey: "ollama" };
 
   const resolved = resolveApiKey(provider, flagValue);
-  if (resolved) return resolved;
+  if (resolved) return { provider, apiKey: resolved };
+
+  // Check if other providers have keys available
+  const alternatives: { provider: Provider; label: string }[] = [];
+  const allProviders: Provider[] = ["anthropic", "gemini", "openai", "ollama"];
+  for (const alt of allProviders) {
+    if (alt === provider) continue;
+    const altKey = resolveApiKey(alt);
+    if (altKey) alternatives.push({ provider: alt, label: providerLabel(alt) });
+  }
 
   const label = providerLabel(provider);
-  const consoleUrl = providerConsoleUrl(provider);
-  const envVar = providerEnvVar(provider);
 
-  const hint = provider === "openai"
-    ? `\n  (Or run ${c.bold("npx @openai/codex login")} to use your ChatGPT subscription)`
-    : "";
-  console.log();
-  printInfo(`No ${label} API key found. Get one at: ${c.path(consoleUrl)}`);
-  console.log(c.dim(`  (Or set the ${envVar} environment variable to skip this prompt)${hint}\n`));
+  if (alternatives.length > 0) {
+    console.log();
+    printInfo(`No ${label} key found. Other providers available:`);
+    const { action } = await inquirer.prompt<{ action: string }>([
+      {
+        type: "list",
+        name: "action",
+        message: "Choose an option:",
+        choices: [
+          ...alternatives.map((a) => ({
+            name: `Switch to ${a.label}`,
+            value: `switch:${a.provider}`,
+          })),
+          { name: `Enter ${label} API key manually`, value: "manual" },
+          { name: "Skip AI generation", value: "skip" },
+        ],
+      },
+    ]);
+
+    if (action === "skip") return undefined;
+
+    if (action.startsWith("switch:")) {
+      const switched = action.slice(7) as Provider;
+      if (switched === "ollama") return { provider: switched, apiKey: "ollama" };
+      return { provider: switched, apiKey: resolveApiKey(switched)! };
+    }
+  } else {
+    const consoleUrl = providerConsoleUrl(provider);
+    const envVar = providerEnvVar(provider);
+    const hint = provider === "openai"
+      ? `\n  (Or run ${c.bold("npx @openai/codex login")} to use your ChatGPT subscription)`
+      : "";
+    console.log();
+    printInfo(`No ${label} API key found. Get one at: ${c.path(consoleUrl)}`);
+    console.log(c.dim(`  (Or set the ${envVar} environment variable to skip this prompt)${hint}\n`));
+  }
 
   const { apiKey } = await inquirer.prompt<{ apiKey: string }>([
     {
       type: "password",
       name: "apiKey",
-      message: `Enter your ${label} API key (blank = skip AI README):`,
+      message: `Enter your ${label} API key (blank = skip):`,
       mask: "*",
     },
   ]);
@@ -118,5 +168,5 @@ export async function ensureApiKey(
   );
   console.log();
 
-  return apiKey.trim();
+  return { provider, apiKey: apiKey.trim() };
 }

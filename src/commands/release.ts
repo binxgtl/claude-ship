@@ -6,7 +6,7 @@ import { getAllFilePaths, filterFilesForGit } from "../scaffold.js";
 import { loadConfig, resolveDefaultProvider } from "../config.js";
 import { printBanner, printSuccess, printError, printWarning, printInfo, spinner, c } from "../ui.js";
 import { generateChangelog } from "../changelog.js";
-import { validateProvider, ensureApiKey } from "../cli-helpers.js";
+import { validateProvider, resolveProviderWithKey } from "../cli-helpers.js";
 
 export interface ReleaseOptions {
   dir: string;
@@ -46,8 +46,10 @@ export async function runRelease(opts: ReleaseOptions) {
   fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
   printSuccess(`package.json updated to ${newVersion}`);
 
-  const provider = validateProvider(opts.provider ?? resolveDefaultProvider());
-  const apiKey = await ensureApiKey(provider, opts.apiKey);
+  let provider = validateProvider(opts.provider ?? resolveDefaultProvider());
+  const resolved = await resolveProviderWithKey(provider, opts.apiKey);
+  const apiKey = resolved?.apiKey;
+  if (resolved) provider = resolved.provider;
 
   let changelogContent = "";
   if (apiKey) {

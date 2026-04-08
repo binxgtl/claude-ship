@@ -291,6 +291,7 @@ async function streamWithOpenAI(req: ProviderRequest): Promise<string> {
   const chunks: string[] = [];
 
   let buf = "";
+  let lastEvent = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -298,12 +299,18 @@ async function streamWithOpenAI(req: ProviderRequest): Promise<string> {
     const lines = buf.split("\n");
     buf = lines.pop() ?? "";
     for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        lastEvent = line.slice(7).trim();
+        continue;
+      }
       if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
       try {
         const parsed = JSON.parse(line.slice(6));
         if (useCodex) {
-          const text = parsed.delta ?? parsed.output_text ?? "";
-          if (text) { chunks.push(text); req.onChunk!(text); }
+          if (lastEvent === "response.output_text.delta" && typeof parsed.delta === "string") {
+            chunks.push(parsed.delta);
+            req.onChunk!(parsed.delta);
+          }
         } else {
           const text = parsed.choices?.[0]?.delta?.content;
           if (text) { chunks.push(text); req.onChunk!(text); }

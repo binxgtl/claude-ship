@@ -4,7 +4,7 @@ import path from "path";
 import { loadConfig, resolveDefaultProvider } from "../config.js";
 import { generateText } from "../providers.js";
 import { printBanner, printSuccess, printWarning, printInfo, spinner, c } from "../ui.js";
-import { validateProvider, ensureApiKey } from "../cli-helpers.js";
+import { validateProvider, resolveProviderWithKey } from "../cli-helpers.js";
 import inquirer from "inquirer";
 
 export interface CommitOptions {
@@ -106,11 +106,13 @@ export async function runCommit(opts: CommitOptions) {
     printInfo(`Comparing against ${c.bold(diffSource)}`);
   }
 
-  const provider = validateProvider(opts.provider ?? resolveDefaultProvider());
-  const apiKey = await ensureApiKey(provider, opts.apiKey);
-  if (!apiKey) {
+  let provider = validateProvider(opts.provider ?? resolveDefaultProvider());
+  const resolved = await resolveProviderWithKey(provider, opts.apiKey);
+  if (!resolved) {
     throw new Error("API key required for commit message generation. Run `claude-ship config` to set one.");
   }
+  provider = resolved.provider;
+  const apiKey = resolved.apiKey;
 
   const prompt = COMMIT_PROMPT
     .replace("{STAGED}", allStaged.join("\n"))

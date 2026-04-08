@@ -156,10 +156,12 @@ function stricterPromptSuffix(issues: string[] = []): string {
   const extra = issues.length > 0 ? `\n- Specific issues to fix: ${issues.join("; ")}` : "";
   return `\n\n## REGEN — previous attempt had quality issues. STRICT mode:
 - Remove ALL <placeholder> tokens. If you don't know a value, omit the row/bullet entirely.
-- No hedging: remove "possibly", "likely", "potentially", "might be", "may be".
+- No hedging: remove "possibly", "likely", "potentially", "might be", "may be", "details not shown", "exists in repository".
 - No generic adjectives: "powerful", "seamless", "robust", "comprehensive", "cutting-edge".
 - Every command must be real and runnable. Every env var must be from the list above.
-- Installation/Getting Started section MUST include the full clone-and-run sequence: git clone → cd → install deps → run. Do NOT skip the git clone line.${extra}`;
+- Installation/Getting Started section MUST include the full clone-and-run sequence: git clone → cd → install deps → run. Do NOT skip the git clone line.
+- Focus on USER-FACING content: what the tool does and how to use it. Remove internal architecture details unless explicitly required.
+- Features must describe user benefits, not implementation details.${extra}`;
 }
 
 // ─── English prompt ───────────────────────────────────────────────────────────
@@ -178,6 +180,7 @@ function buildEnglishPrompt(opts: ReadmeOptions): string {
 
   return `You are a senior software engineer writing a production-quality GitHub README.md.
 Your goal: make developers immediately understand this project and want to use it.
+The audience is END USERS who want to install and use this tool — NOT internal developers reading the source code.
 Detail level: ${detail.toUpperCase()} — target output ~${maxTokenHint} tokens.
 ${styleLine}
 
@@ -193,7 +196,15 @@ ${styleLine}
 6. Architecture/file descriptions: write ONLY what the provided source snippets show. Do NOT infer functionality from file names or general conventions about similar tools.
 7. Commander.js \`.name("x")\` sets the program name — it is NOT a subcommand. Only \`.command("x")\` defines subcommands. Do NOT list "name" as a command unless it appears as \`.command("name")\` in the source.
 8. Environment variables: list ONLY those from the "CLI / runtime info" section above. Do NOT add rows like "VAR_NAME" or any placeholder — if you don't know a variable name, skip it entirely.
-9. Tech Stack: list ONLY direct dependencies from package.json/Cargo.toml/etc. Do NOT list implicit/transitive packages (e.g. esbuild inside tsx, rollup inside vite).${opts.context.hasTests ? "" : "\n10. This project has NO test suite — do NOT mention running tests, writing tests, or test commands anywhere."}
+9. Tech Stack: list ONLY direct dependencies from package.json/Cargo.toml/etc. Do NOT list implicit/transitive packages (e.g. esbuild inside tsx, rollup inside vite).
+10. NEVER output random words, fragments, or gibberish. Every sentence must be complete and meaningful. If you cannot generate a proper section, omit it entirely.
+11. Keep descriptions factual and concise. Do NOT repeat the same information in multiple sections. Avoid filler text.
+12. This is a USER-FACING README. Focus on what the tool DOES and HOW TO USE IT:
+    - Installation section MUST include concrete install commands (npm install / npx).
+    - Usage section MUST include real, runnable CLI command examples with actual flags.
+    - Do NOT describe internal file structure, module responsibilities, or code architecture unless the detail level is "large" or "carefully".
+    - Do NOT write phrases like "details not shown in snippets", "exists in repository", or "not visible in provided code" — if you don't have info about something, SKIP IT entirely.
+    - Features should describe USER BENEFITS, not implementation details (e.g. "Push projects to GitHub" NOT "Uses Octokit wrapper for repo creation").${opts.context.hasTests ? "" : "\n13. This project has NO test suite — do NOT mention running tests, writing tests, or test commands anywhere."}
 
 ## Project information
 - Name: ${opts.projectName}
@@ -226,7 +237,7 @@ function buildVietnamesePrompt(opts: ReadmeOptions): string {
 
   return `You are a senior software engineer writing a production-quality GitHub README.md IN VIETNAMESE.
 The README must be written entirely in Vietnamese — this is a hard requirement.
-Audience: Vietnamese developers on Viblo, GitHub, TopDev.
+Audience: Vietnamese developers on Viblo, GitHub, TopDev — END USERS who want to install and use this tool, NOT internal developers.
 Detail level: ${detail.toUpperCase()} — target output ~${maxTokenHint} tokens.
 ${styleLine}
 
@@ -241,7 +252,14 @@ ${styleLine}
 6. Architecture/file descriptions: write ONLY what the provided source snippets show. Do NOT infer functionality from file names or general conventions about similar tools.
 7. Commander.js \`.name("x")\` sets the program name — it is NOT a subcommand. Only \`.command("x")\` defines subcommands. Do NOT list "name" as a command unless it appears as \`.command("name")\` in the source.
 8. Environment variables: list ONLY those from the "CLI / runtime info" section above. Do NOT add rows like "VAR_NAME" or any placeholder — if you don't know a variable name, skip it entirely.
-9. Tech Stack: list ONLY direct dependencies from package.json/Cargo.toml/etc. Do NOT list implicit/transitive packages (e.g. esbuild inside tsx, rollup inside vite).${opts.context.hasTests ? "" : "\n10. This project has NO test suite — do NOT mention running tests, writing tests, or test commands anywhere."}
+9. Tech Stack: list ONLY direct dependencies from package.json/Cargo.toml/etc. Do NOT list implicit/transitive packages (e.g. esbuild inside tsx, rollup inside vite).
+10. NEVER output random words, fragments, or gibberish. Every sentence must be complete and meaningful. If you cannot generate a proper section, omit it entirely.
+11. This is a USER-FACING README. Focus on what the tool DOES and HOW TO USE IT:
+    - Installation section MUST include concrete install commands (npm install / npx).
+    - Usage section MUST include real, runnable CLI command examples with actual flags.
+    - Do NOT describe internal file structure, module responsibilities, or code architecture unless the detail level is "large" or "carefully".
+    - Do NOT write phrases like "details not shown", "exists in repository", "không rõ chi tiết" — if you don't have info, SKIP IT.
+    - Features should describe USER BENEFITS, not implementation details.${opts.context.hasTests ? "" : "\n12. This project has NO test suite — do NOT mention running tests, writing tests, or test commands anywhere."}
 
 ## Project information
 - Name: ${opts.projectName}

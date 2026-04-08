@@ -12,7 +12,7 @@ import { providerLabel, providerEnvVar } from "../providers.js";
 import { printSuccess, printInfo, spinner, c } from "../ui.js";
 import {
   validateProvider, resolveFallback, printQuality,
-  resolveMaxTokens, resolveDetail, resolveStyle, ensureApiKey,
+  resolveMaxTokens, resolveDetail, resolveStyle, resolveProviderWithKey,
 } from "../cli-helpers.js";
 
 export interface ReadmeRunOptions {
@@ -27,19 +27,21 @@ export interface ReadmeRunOptions {
 }
 
 export async function runReadme(opts: ReadmeRunOptions) {
-  const provider = validateProvider(opts.provider);
+  let provider = validateProvider(opts.provider);
   const readmeCfg = loadConfig();
   const detail = resolveDetail(opts.detail, readmeCfg);
   const dir = fs.realpathSync(opts.dir);
 
-  const apiKey = await ensureApiKey(provider, opts.apiKey);
-  if (!apiKey) {
+  const resolved = await resolveProviderWithKey(provider, opts.apiKey);
+  if (!resolved) {
     throw new Error(
       `API key required for README generation.\n` +
         `Set the ${providerEnvVar(provider)} environment variable, or run:\n` +
         `  claude-ship config`
     );
   }
+  provider = resolved.provider;
+  const apiKey = resolved.apiKey;
 
   const isVi = opts.vi || (readmeCfg.defaultVi ?? false);
   const allFiles = getAllFilePaths(dir);
