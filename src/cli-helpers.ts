@@ -1,5 +1,5 @@
 import inquirer from "inquirer";
-import { loadConfig, mergeConfig, resolveApiKey } from "./config.js";
+import { mergeConfig, resolveApiKey } from "./config.js";
 import { resolveGitHubToken, validateGitHubToken } from "./github.js";
 import { providerConsoleUrl, providerEnvVar, providerLabel } from "./providers.js";
 import { printSuccess, printError, printWarning, printInfo, c } from "./ui.js";

@@ -11,7 +11,7 @@ import {
   writeLicenseFile, generateEnvExample,
 } from "../scaffold.js";
 import { loadConfig, resolveDefaultProvider } from "../config.js";
-import { providerLabel } from "../providers.js";
+import { generateText } from "../providers.js";
 import {
   printBanner, printSuccess, printError, printWarning,
   printInfo, printShipSummary, spinner, c,
@@ -23,7 +23,6 @@ import {
   validateProvider, resolveFallback, printQuality,
   resolveMaxTokens, resolveDetail, resolveStyle, resolveProviderWithKey,
 } from "../cli-helpers.js";
-import { generateText } from "../providers.js";
 import { simpleGit } from "simple-git";
 
 export interface PushOptions {

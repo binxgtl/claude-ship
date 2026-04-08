@@ -238,6 +238,7 @@ function renderFiles(cfg: AppConfig): void {
 type Choice = { name: string; value: string } | any;
 
 function sep(label = ""): Choice {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return new (inquirer as any).Separator(label ? c.dim(" " + label) : "");
 }
 

@@ -1,5 +1,4 @@
 import inquirer from "inquirer";
-import fs from "fs";
 import { parseClaudeResponse, buildFileTree } from "../parser.js";
 import { detectTechStack, getGitignoreContent } from "../detector.js";
 import { generateReadme, generateReadmeFallback } from "../readme.js";

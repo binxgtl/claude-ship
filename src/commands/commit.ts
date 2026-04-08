@@ -1,7 +1,7 @@
 import { simpleGit } from "simple-git";
 import fs from "fs";
 import path from "path";
-import { loadConfig, resolveDefaultProvider } from "../config.js";
+import { resolveDefaultProvider } from "../config.js";
 import { generateText } from "../providers.js";
 import { printBanner, printSuccess, printWarning, printInfo, spinner, c } from "../ui.js";
 import { validateProvider, resolveProviderWithKey } from "../cli-helpers.js";
