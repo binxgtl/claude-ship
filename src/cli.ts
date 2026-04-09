@@ -14,6 +14,8 @@ import { runBatch } from "./commands/batch.js";
 import { runRelease } from "./commands/release.js";
 import { runOpenAILogin } from "./openai-login.js";
 import { runCommit } from "./commands/commit.js";
+import { runDiff } from "./commands/diff.js";
+import { runDoctor } from "./commands/doctor.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function action(fn: (...args: any[]) => Promise<void>) {
@@ -188,6 +190,21 @@ export function createCLI(): Command {
     .option("-p, --push", "Push to remote after committing", false)
     .option("-y, --yes", "Skip confirmation, commit immediately", false)
     .action(action(runCommit));
+
+  // ── diff ───────────────────────────────────────────────────────────────────
+  program
+    .command("diff")
+    .description("Compare a Claude response against an existing project and selectively apply changes")
+    .option("--file <path>", "Path to a text file containing the Claude response")
+    .option("--dir <path>", "Project directory to compare against (default: cwd)", ".")
+    .option("-y, --yes", "Apply all changes without prompting", false)
+    .action(action(runDiff));
+
+  // ── doctor ─────────────────────────────────────────────────────────────────
+  program
+    .command("doctor")
+    .description("Check prerequisites: runtime, API keys, GitHub auth")
+    .action(action(runDoctor));
 
   // ── login ──────────────────────────────────────────────────────────────────
   program
