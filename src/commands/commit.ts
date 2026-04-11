@@ -98,9 +98,13 @@ export async function runCommit(opts: CommitOptions) {
     diffContent = await git.diff(["--staged"]).catch(() => "");
   }
 
-  const truncatedDiff = diffContent.length > 8000
+  const wasTruncated = diffContent.length > 8000;
+  const truncatedDiff = wasTruncated
     ? diffContent.slice(0, 8000) + "\n... (truncated)"
     : diffContent;
+  if (wasTruncated) {
+    printWarning(`Diff is large (${(diffContent.length / 1024).toFixed(1)} KB) — truncated to 8 KB for AI context.`);
+  }
 
   if (diffSource !== "staged") {
     printInfo(`Comparing against ${c.bold(diffSource)}`);

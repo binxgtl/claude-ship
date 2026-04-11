@@ -234,10 +234,10 @@ function myersDiff(a: string[], b: string[]): Edit[] {
 
     for (let k = -d; k <= d; k += 2) {
       let x: number;
-      if (k === -d || (k !== d && v[offset + k - 1]! < v[offset + k + 1]!)) {
-        x = v[offset + k + 1]!;
+      if (k === -d || (k !== d && v[offset + k - 1] < v[offset + k + 1])) {
+        x = v[offset + k + 1];
       } else {
-        x = v[offset + k - 1]! + 1;
+        x = v[offset + k - 1] + 1;
       }
       let y = x - k;
 
@@ -263,13 +263,13 @@ function myersDiff(a: string[], b: string[]): Edit[] {
     const k = x - y;
 
     let prevK: number;
-    if (k === -d || (k !== d && snap[offset + k - 1]! < snap[offset + k + 1]!)) {
+    if (k === -d || (k !== d && snap[offset + k - 1] < snap[offset + k + 1])) {
       prevK = k + 1;
     } else {
       prevK = k - 1;
     }
 
-    const prevX = snap[offset + prevK]!;
+    const prevX = snap[offset + prevK];
     const prevY = prevX - prevK;
 
     while (x > prevX && y > prevY) {

@@ -170,7 +170,7 @@ function buildEnglishPrompt(opts: ReadmeOptions): string {
   const detail = opts.detail ?? "normal";
   const badges = renderBadges(opts.stack.badges);
   const techList = [...opts.stack.frameworks, ...opts.stack.languages].join(", ");
-  const fileList = opts.files.slice(0, 50).join("\n");
+  const fileList = opts.files.slice(0, 80).join("\n");
   const contextSection = buildContextSection(opts.context);
   const usageSection = buildUsageHints(opts.context);
   const structure = buildStructureSpec(detail, opts, false);
@@ -206,6 +206,30 @@ ${styleLine}
     - Do NOT write phrases like "details not shown in snippets", "exists in repository", or "not visible in provided code" — if you don't have info about something, SKIP IT entirely.
     - Features should describe USER BENEFITS, not implementation details (e.g. "Push projects to GitHub" NOT "Uses Octokit wrapper for repo creation").${opts.context.hasTests ? "" : "\n13. This project has NO test suite — do NOT mention running tests, writing tests, or test commands anywhere."}
 
+## WRITING STYLE — critical
+
+Write like a senior engineer writing docs for other engineers: precise, concise, confident.
+- Short sentences. No filler. Every sentence states a fact or shows a command.
+- Features describe user benefits, not implementation details.
+
+NEVER use these patterns:
+"A powerful CLI tool built to..." | "This comprehensive solution..." | "Seamlessly integrates with..."
+Any intro that sounds like a sales pitch.
+
+## GOOD vs BAD examples:
+
+BAD:  "A powerful CLI tool built to automate the deployment workflow with seamless integration."
+GOOD: "Parse Claude responses, scaffold files, push to GitHub — one command."
+
+BAD:  "The system provides automatic tech stack detection with high accuracy."
+GOOD: "Detects tech stack from file structure (Node.js, Python, Rust, Go) and generates matching \`.gitignore\`."
+
+BAD:  "Users can easily configure parameters according to their needs."
+GOOD: "Config stored at \`~/.claudeship/config.json\`, encrypted with AES-256. Run \`claude-ship config\` to edit."
+
+BAD:  "The dry-run feature allows users to preview results before execution."
+GOOD: "\`--dry-run\` outputs full preview — no disk writes, no API calls."
+
 ## Project information
 - Name: ${opts.projectName}
 - Description: ${opts.description}
@@ -227,7 +251,7 @@ function buildVietnamesePrompt(opts: ReadmeOptions): string {
   const detail = opts.detail ?? "normal";
   const badges = renderBadges(opts.stack.badges);
   const techList = [...opts.stack.frameworks, ...opts.stack.languages].join(", ");
-  const fileList = opts.files.slice(0, 50).join("\n");
+  const fileList = opts.files.slice(0, 80).join("\n");
   const contextSection = buildContextSection(opts.context);
   const usageSection = buildUsageHints(opts.context);
   const structure = buildStructureSpec(detail, opts, true);
@@ -310,7 +334,7 @@ ${structure}`;
 function buildNewLanguageEnglishPrompt(opts: ReadmeOptions): string {
   const badges = renderBadges(opts.stack.badges);
   const techList = [...opts.stack.frameworks, ...opts.stack.languages].join(", ");
-  const fileList = opts.files.slice(0, 50).join("\n");
+  const fileList = opts.files.slice(0, 80).join("\n");
   const contextSection = buildContextSection(opts.context);
   const usageSection = buildUsageHints(opts.context);
 
@@ -404,7 +428,7 @@ MIT © ${new Date().getFullYear()}`;
 function buildNewLanguageVietnamesePrompt(opts: ReadmeOptions): string {
   const badges = renderBadges(opts.stack.badges);
   const techList = [...opts.stack.frameworks, ...opts.stack.languages].join(", ");
-  const fileList = opts.files.slice(0, 50).join("\n");
+  const fileList = opts.files.slice(0, 80).join("\n");
   const contextSection = buildContextSection(opts.context);
   const usageSection = buildUsageHints(opts.context);
 
@@ -1332,9 +1356,9 @@ export function generateReadmeFallback(
   const install = installCommand(opts.stack.packageManager);
   const dev = devCommand(opts.stack.packageManager);
 
-  const hasEnvExample = opts.files.includes(".env.example");
+  const hasEnvExample = opts.files.some((f) => f === ".env.example" || f.endsWith("/.env.example"));
   const hasPrisma = opts.files.some((f) => f.endsWith(".prisma"));
-  const hasDocker = opts.files.includes("Dockerfile") || opts.files.includes("docker-compose.yml");
+  const hasDocker = opts.files.some((f) => f === "Dockerfile" || f.endsWith("/Dockerfile") || f === "docker-compose.yml" || f.endsWith("/docker-compose.yml"));
 
   const extraSteps: string[] = [];
   if (hasEnvExample) extraSteps.push("cp .env.example .env  # fill in your values");

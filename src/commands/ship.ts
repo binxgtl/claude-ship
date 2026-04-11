@@ -205,11 +205,13 @@ export async function runShip(opts: ShipOptions) {
     }
 
     if (resolution === "skip") {
+      const skippedCount = conflicts.existing.length;
       parseResult.files = parseResult.files.filter(
         (f) => !conflicts.existing.includes(f.path)
       );
+      conflicts.existing = [];
       printInfo(
-        `Writing ${parseResult.files.length} new files, skipping ${conflicts.existing.length} existing.`
+        `Writing ${parseResult.files.length} new files, skipping ${skippedCount} existing.`
       );
     }
   }

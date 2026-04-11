@@ -221,9 +221,6 @@ async function resolveOpenAIAuth(apiKey: string): Promise<{ token: string; baseU
 
   const auth = readCodexAuth();
   if (!auth) {
-    if (apiKey && apiKey.startsWith("sk-")) {
-      return { token: apiKey, baseUrl: "https://api.openai.com/v1", useCodex: false };
-    }
     throw new Error(
       "No OpenAI Codex OAuth tokens found.\n" +
       "Login first:  npx @openai/codex login\n" +

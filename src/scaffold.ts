@@ -20,7 +20,7 @@ export function writeFiles(outputDir: string, files: ParsedFile[]): void {
 export function writeFile(outputDir: string, filePath: string, content: string): void {
   const resolvedBase = path.resolve(outputDir);
   const fullPath = path.resolve(resolvedBase, normalizeFsPath(filePath));
-  if (!fullPath.startsWith(resolvedBase + path.sep) && fullPath !== resolvedBase) {
+  if (!fullPath.startsWith(resolvedBase + path.sep)) {
     throw new Error(`Unsafe path rejected: "${filePath}"`);
   }
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
@@ -270,7 +270,7 @@ export function extractReadmeContext(files: ParsedFile[]): ReadmeContext {
 
   // Additional key source files — as many as possible, beyond config + entry already picked
   const alreadyUsed = new Set([configFileName, entryFileName].filter(Boolean));
-  const additionalSnippets = pickKeyFiles(files, alreadyUsed, 12);
+  const additionalSnippets = pickKeyFiles(files, alreadyUsed, 20);
 
   // Detect CLI subcommands from Commander-style .command("name") calls in source files
   const cliCommands = detectCliCommands(files);
@@ -491,7 +491,7 @@ function pickKeyFiles(
   return scored.slice(0, max).map(({ file }) => ({
     filename: file.path,
     // Pass full content for small files; use keySnippet (skip imports) for larger ones
-    snippet: file.content.split("\n").length <= 80 ? file.content : keySnippet(file.content),
+    snippet: file.content.split("\n").length <= 120 ? file.content : keySnippet(file.content),
   }));
 }
 
@@ -504,7 +504,7 @@ function headLines(content: string, n: number): string {
  * Skips the leading import block so the model sees actual logic/API definitions
  * rather than a wall of import statements.
  */
-function keySnippet(content: string, lines = 60): string {
+function keySnippet(content: string, lines = 90): string {
   const cleaned = stripLeadingAiComments(content);
   const all = cleaned.split("\n");
 

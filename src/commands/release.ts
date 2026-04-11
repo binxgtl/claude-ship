@@ -18,7 +18,11 @@ export interface ReleaseOptions {
 }
 
 function bumpVersion(version: string, bump: "patch" | "minor" | "major"): string {
-  const parts = version.replace(/^v/, "").split(".").map(Number);
+  const clean = version.replace(/^v/, "");
+  if (!/^\d+\.\d+\.\d+/.test(clean)) {
+    throw new Error(`Invalid semver version: "${version}" — expected format like 1.2.3`);
+  }
+  const parts = clean.split(".").slice(0, 3).map(Number);
   const [major = 0, minor = 0, patch = 0] = parts;
   switch (bump) {
     case "major": return `${major + 1}.0.0`;
