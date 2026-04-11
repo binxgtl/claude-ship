@@ -1,6 +1,6 @@
 import { execSync } from "child_process";
 import fs from "fs";
-import { resolveApiKey, loadConfig, configFilePath } from "../config.js";
+import { resolveApiKey, configFilePath } from "../config.js";
 import { resolveGitHubToken, validateGitHubToken } from "../github.js";
 import { findCodexAuthFile } from "../providers.js";
 import { printBanner, c } from "../ui.js";

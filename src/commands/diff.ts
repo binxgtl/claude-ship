@@ -4,7 +4,7 @@ import path from "path";
 import { parseClaudeResponse, buildFileTree } from "../parser.js";
 import { readInputFile, writeFile } from "../scaffold.js";
 import {
-  printBanner, printSuccess, printWarning, printInfo,
+  printBanner, printSuccess, printInfo,
   printFileTree, spinner, readMultilineInput, c,
 } from "../ui.js";
 
