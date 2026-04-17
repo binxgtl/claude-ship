@@ -132,11 +132,15 @@ function sanitizeOutput(text: string, ctx: ReadmeContext): SanitizeResult {
   if (hasInstallSection) {
     const isCli = Boolean(ctx.binName);
     const installOk = isCli
-      ? /\bnpx\b|\bnpm install\b|\byarn (global )?add\b|\bpnpm (add|install)\b/i.test(text)
+      ? /\bnpx\b|\bnpm install\b|\byarn (global |dlx )?add\b|\byarn dlx\b|\bpnpm (add|install|dlx)\b/i.test(text)
       : /\bgit clone\b/i.test(text);
     if (!installOk) {
       missingInstall = true;
-      issues.push(isCli ? "Install section missing npx/npm install command" : "Install section missing git clone command");
+      issues.push(
+        isCli
+          ? "Install section missing package-manager command"
+          : "Install section missing git clone command"
+      );
     }
   }
 
@@ -159,7 +163,7 @@ function stricterPromptSuffix(issues: string[] = []): string {
 - No hedging: remove "possibly", "likely", "potentially", "might be", "may be", "details not shown", "exists in repository".
 - No generic adjectives: "powerful", "seamless", "robust", "comprehensive", "cutting-edge".
 - Every command must be real and runnable. Every env var must be from the list above.
-- Installation/Getting Started section MUST include the full clone-and-run sequence: git clone → cd → install deps → run. Do NOT skip the git clone line.
+- Installation/Getting Started section MUST include the full clone-and-run sequence: git clone → cd → install deps with the project's package manager → run. Do NOT skip the git clone line.
 - Focus on USER-FACING content: what the tool does and how to use it. Remove internal architecture details unless explicitly required.
 - Features must describe user benefits, not implementation details.${extra}`;
 }
@@ -200,7 +204,7 @@ ${styleLine}
 10. NEVER output random words, fragments, or gibberish. Every sentence must be complete and meaningful. If you cannot generate a proper section, omit it entirely.
 11. Keep descriptions factual and concise. Do NOT repeat the same information in multiple sections. Avoid filler text.
 12. This is a USER-FACING README. Focus on what the tool DOES and HOW TO USE IT:
-    - Installation section MUST include concrete install commands (npm install / npx).
+    - Installation section MUST include concrete install commands using the project's package manager (npm/yarn/pnpm/pip/cargo/go).
     - Usage section MUST include real, runnable CLI command examples with actual flags.
     - Do NOT describe internal file structure, module responsibilities, or code architecture unless the detail level is "large" or "carefully".
     - Do NOT write phrases like "details not shown in snippets", "exists in repository", or "not visible in provided code" — if you don't have info about something, SKIP IT entirely.
@@ -279,7 +283,7 @@ ${styleLine}
 9. Tech Stack: list ONLY direct dependencies from package.json/Cargo.toml/etc. Do NOT list implicit/transitive packages (e.g. esbuild inside tsx, rollup inside vite).
 10. NEVER output random words, fragments, or gibberish. Every sentence must be complete and meaningful. If you cannot generate a proper section, omit it entirely.
 11. This is a USER-FACING README. Focus on what the tool DOES and HOW TO USE IT:
-    - Installation section MUST include concrete install commands (npm install / npx).
+    - Installation section MUST include concrete install commands using the project's package manager (npm/yarn/pnpm/pip/cargo/go).
     - Usage section MUST include real, runnable CLI command examples with actual flags.
     - Do NOT describe internal file structure, module responsibilities, or code architecture unless the detail level is "large" or "carefully".
     - Do NOT write phrases like "details not shown", "exists in repository", "không rõ chi tiết" — if you don't have info, SKIP IT.
@@ -898,7 +902,12 @@ ${installBlock}
 
 // ─── Install section builder ──────────────────────────────────────────────────
 
-function buildInstallSection(ctx: ReadmeContext, projectName: string, vietnamese: boolean, githubUsername?: string): string {
+export function buildInstallSection(
+  ctx: ReadmeContext,
+  projectName: string,
+  vietnamese: boolean,
+  githubUsername?: string
+): string {
   const isCli = Boolean(ctx.binName);
   const repoUrl = githubUsername
     ? `https://github.com/${githubUsername}/${projectName}.git`
@@ -906,15 +915,20 @@ function buildInstallSection(ctx: ReadmeContext, projectName: string, vietnamese
 
   if (isCli) {
     const bin = ctx.binName;
+    const directRun = cliDirectRunCommand(ctx, bin);
+    const globalInstall = globalInstallCommandFromCtx(ctx, projectName);
+    const contributorInstall = installCommandFromCtx(ctx);
+    const contributorBuild = contributorBuildCommandFromCtx(ctx);
+    const contributorRun = contributorRunCommandFromCtx(ctx, bin);
     if (vietnamese) {
       return `### Cài đặt
 
 \`\`\`bash
-# Dùng thẳng với npx — không cần cài global
-npx ${bin}
+# Dùng trực tiếp mà không cần cài global
+${directRun}
 
 # Hoặc cài global một lần
-npm install -g ${projectName}
+${globalInstall}
 ${bin} --help
 \`\`\`
 
@@ -923,19 +937,18 @@ ${bin} --help
 \`\`\`bash
 git clone ${repoUrl}
 cd ${projectName}
-npm install
-npm run build
-node dist/index.js --help
+${contributorInstall}${contributorBuild ? `\n${contributorBuild}` : ""}
+${contributorRun}
 \`\`\``;
     } else {
       return `### Installation
 
 \`\`\`bash
-# No install needed — run directly with npx
-npx ${bin}
+# Run directly without a global install
+${directRun}
 
 # Or install globally once
-npm install -g ${projectName}
+${globalInstall}
 ${bin} --help
 \`\`\`
 
@@ -944,15 +957,15 @@ ${bin} --help
 \`\`\`bash
 git clone ${repoUrl}
 cd ${projectName}
-npm install
-npm run build
-node dist/index.js --help
+${contributorInstall}${contributorBuild ? `\n${contributorBuild}` : ""}
+${contributorRun}
 \`\`\``;
     }
   }
 
   // Non-CLI project — standard clone flow
   const installCmd = installCommandFromCtx(ctx);
+  const runCmd = runtimeCommandFromCtx(ctx);
   if (vietnamese) {
     return `### Cài đặt
 
@@ -961,7 +974,7 @@ git clone ${repoUrl}
 cd ${projectName}
 ${installCmd}
 <các bước setup thêm nếu cần — .env, migrate, v.v.>
-<lệnh chạy>
+${runCmd}
 \`\`\``;
   }
   return `### Installation
@@ -971,7 +984,7 @@ git clone ${repoUrl}
 cd ${projectName}
 ${installCmd}
 <any extra setup steps — .env, migrate, etc.>
-<run command>
+${runCmd}
 \`\`\``;
 }
 
@@ -980,9 +993,62 @@ function installCommandFromCtx(ctx: ReadmeContext): string {
     case "pip": return "pip install -r requirements.txt";
     case "cargo": return "cargo build --release";
     case "go": return "go mod download && go build ./...";
+    case "gradle": return "./gradlew build";
     case "yarn": return "yarn install";
     case "pnpm": return "pnpm install";
     default: return "npm install";
+  }
+}
+
+function runScriptFromCtx(ctx: ReadmeContext, scriptName: string): string {
+  if (ctx.packageManager === "yarn") return `yarn ${scriptName}`;
+  if (ctx.packageManager === "pnpm") return `pnpm run ${scriptName}`;
+  return `npm run ${scriptName}`;
+}
+
+function cliDirectRunCommand(ctx: ReadmeContext, binName: string): string {
+  if (ctx.packageManager === "yarn") return `yarn dlx ${binName}`;
+  if (ctx.packageManager === "pnpm") return `pnpm dlx ${binName}`;
+  return `npx ${binName}`;
+}
+
+function globalInstallCommandFromCtx(ctx: ReadmeContext, projectName: string): string {
+  if (ctx.packageManager === "yarn") return `yarn global add ${projectName}`;
+  if (ctx.packageManager === "pnpm") return `pnpm add -g ${projectName}`;
+  return `npm install -g ${projectName}`;
+}
+
+function contributorBuildCommandFromCtx(ctx: ReadmeContext): string {
+  return ctx.packageScripts.build ? runScriptFromCtx(ctx, "build") : "";
+}
+
+function contributorRunCommandFromCtx(ctx: ReadmeContext, binName: string): string {
+  if (ctx.packageScripts.start) return runScriptFromCtx(ctx, "start");
+  if (ctx.packageScripts.dev) return runScriptFromCtx(ctx, "dev");
+  if (ctx.packageScripts.preview) return runScriptFromCtx(ctx, "preview");
+  return `npx ${binName} --help`;
+}
+
+function runtimeCommandFromCtx(ctx: ReadmeContext): string {
+  if (ctx.packageScripts.dev) return runScriptFromCtx(ctx, "dev");
+  if (ctx.packageScripts.start) return runScriptFromCtx(ctx, "start");
+  if (ctx.packageScripts.preview) return runScriptFromCtx(ctx, "preview");
+
+  switch (ctx.packageManager) {
+    case "pip":
+      return ctx.entryFileName ? `python ${ctx.entryFileName}` : "python main.py";
+    case "cargo":
+      return "cargo run";
+    case "go":
+      return "go run .";
+    case "gradle":
+      return "./gradlew run";
+    case "yarn":
+      return "yarn dev";
+    case "pnpm":
+      return "pnpm dev";
+    default:
+      return "npm run dev";
   }
 }
 
@@ -996,7 +1062,10 @@ function buildUsageHints(ctx: ReadmeContext): string {
   const lines: string[] = [];
 
   if (ctx.binName) {
-    lines.push(`- CLI binary name: \`${ctx.binName}\` (run as \`npx ${ctx.binName}\` or \`${ctx.binName}\` if installed globally)`);
+    const directRun = cliDirectRunCommand(ctx, ctx.binName);
+    lines.push(
+      `- CLI binary name: \`${ctx.binName}\` (run as \`${directRun}\` or \`${ctx.binName}\` if installed globally)`
+    );
   }
   if (ctx.cliCommands.length > 0) {
     lines.push(`- CLI subcommands (ONLY document these — do not invent others): ${ctx.cliCommands.join(", ")}`);

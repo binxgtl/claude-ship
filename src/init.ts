@@ -8,7 +8,7 @@ import { printSuccess, printInfo, printWarning, c } from "./ui.js";
 import { loadConfig } from "./config.js";
 import { generateCiWorkflow } from "./ci-generator.js";
 import { generateDockerfile, generateDockerCompose } from "./docker-generator.js";
-import { generateHooksConfig } from "./hooks-generator.js";
+import { generateHooksConfig, applyHooksConfig } from "./hooks-generator.js";
 
 interface StackTemplate {
   label: string;
@@ -433,13 +433,18 @@ export async function runInit(): Promise<void> {
       gitignorePreset: template.gitignore,
       packageManager: template.packageManager,
       hasTests: false,
+      files: template.files.map((file) => file.path),
     });
     writeFile(outputDir, ".github/workflows/ci.yml", ciContent);
     printSuccess("GitHub Actions CI workflow generated");
   }
 
   if (addDocker) {
-    const dockerOpts = { gitignorePreset: template.gitignore, packageManager: template.packageManager };
+    const dockerOpts = {
+      gitignorePreset: template.gitignore,
+      packageManager: template.packageManager,
+      files: template.files.map((file) => file.path),
+    };
     writeFile(outputDir, "Dockerfile", generateDockerfile(dockerOpts));
     writeFile(outputDir, "docker-compose.yml", generateDockerCompose(dockerOpts));
     printSuccess("Dockerfile and docker-compose.yml generated");
@@ -452,11 +457,16 @@ export async function runInit(): Promise<void> {
       hasLint: true, hasFormat: false, hasTypecheck: false,
     });
     if (hooksResult) {
-      writeFile(outputDir, ".husky/pre-commit", hooksResult.huskyPreCommit);
-      if (Object.keys(hooksResult.lintStagedConfig).length > 0) {
-        writeFile(outputDir, ".lintstagedrc.json", JSON.stringify(hooksResult.lintStagedConfig, null, 2) + "\n");
+      const applied = applyHooksConfig(outputDir, hooksResult);
+      if (applied.packageJsonUpdated) {
+        printSuccess("package.json updated with hook dependencies");
       }
       printSuccess("Pre-commit hooks generated");
+      for (const warning of applied.warnings) {
+        printWarning(warning);
+      }
+    } else {
+      printWarning("Pre-commit hooks are currently only supported for Node-based projects with package.json.");
     }
   }
 

@@ -71,13 +71,13 @@ claude-ship --help
 - **Push project có sẵn** — không cần output Claude; tự tạo repo nếu chưa có
 - **Template project** — lệnh `init` tạo project mới từ 6 template (Node.js, React, Next.js, Express, FastAPI, CLI Tool)
 - **AI changelog** — lệnh `changelog` tạo CHANGELOG.md từ git history bằng AI
-- **Xử lý hàng loạt** — lệnh `batch` xử lý nhiều file Claude response thành các project riêng biệt
-- **AI commit message** — lệnh `commit` đọc `git diff` staged, tạo commit message theo conventional commits, cho phép xem/sửa/tạo lại trước khi commit
-- **Quản lý release** — lệnh `release` bump version, tạo changelog, tạo git tag, và publish GitHub Release
-- **Tạo Docker** — flag `--docker` tạo `Dockerfile` và `docker-compose.yml` (multi-stage build cho Node/Python/Rust/Go)
+- **Xử lý hàng loạt** — lệnh `batch` scaffold nhiều file Claude response thành các project local riêng biệt, có thể thêm CI/Docker và tạo commit ban đầu cho từng project
+- **AI commit message** — lệnh `commit` đọc các thay đổi đã stage, tạo commit message theo conventional commits, cho phép xem/sửa/tạo lại trước khi commit
+- **Quản lý release** — lệnh `release` bump version, tạo changelog, tạo tag release, và publish GitHub Release trong khi chỉ stage các file release
+- **Tạo Docker** — flag `--docker` tạo `Dockerfile` và `docker-compose.yml` với mặc định phù hợp theo script, lockfile, và file entry được phát hiện
 - **Tạo `.env.example`** — flag `--env-example` phát hiện biến môi trường và tạo template `.env.example`
-- **Pre-commit hooks** — flag `--hooks` tạo cấu hình husky + lint-staged
-- **GitHub Actions CI** — tự động tạo `.github/workflows/ci.yml` với flag `--ci` (Node.js, Python, Rust, Go)
+- **Pre-commit hooks** — flag `--hooks` tạo file husky + lint-staged và cập nhật script/devDependencies trong `package.json` khi cần
+- **GitHub Actions CI** — tự động tạo `.github/workflows/ci.yml` với flag `--ci`, tự điều chỉnh bước install/build/test theo script và lockfile được phát hiện
 - **Hỗ trợ monorepo** — phát hiện npm/pnpm/yarn workspaces và đưa thông tin package vào README
 - **Preview & diff** — `readme --preview` để xem trước; `push --diff` để xem tóm tắt thay đổi trước khi push
 - **Chế độ dry-run** — xem trước tất cả thao tác mà không ghi file hay gọi API
@@ -120,10 +120,10 @@ npx @binxgodteli/claude-ship ship --file ./output.txt --name my-project -d
 | `--org <org>` | GitHub organization để tạo repo |
 | `--branch <name>` | Tên branch (mặc định: `main`) |
 | `--no-push` | Chỉ tạo file local, không push lên GitHub |
-| `--ci` | Tạo GitHub Actions CI workflow |
-| `--docker` | Tạo `Dockerfile` và `docker-compose.yml` |
+| `--ci` | Tạo GitHub Actions CI workflow theo script và lockfile được phát hiện |
+| `--docker` | Tạo `Dockerfile` và `docker-compose.yml` với mặc định phù hợp theo stack |
 | `--env-example` | Tạo `.env.example` từ biến môi trường được phát hiện |
-| `--hooks` | Tạo pre-commit hooks (husky + lint-staged) |
+| `--hooks` | Tạo pre-commit hooks và cập nhật `package.json` cho husky/lint-staged |
 | `-d, --dry-run` | Xem trước — không ghi file, không gọi API |
 
 ---
@@ -159,18 +159,18 @@ npx @binxgodteli/claude-ship push --org my-org --private --no-readme
 | `--token <token>` | GitHub personal access token |
 | `--org <org>` | GitHub organization |
 | `--branch <name>` | Tên branch (mặc định: `main`) |
-| `--message <msg>` | Nội dung commit (mặc định: `🚀 Update via claude-ship`) |
+| `--message <msg>` | Nội dung commit (mặc định: `chore: update via claude-ship`) |
 | `--diff` | Hiện tóm tắt thay đổi và xác nhận trước khi push |
-| `--ci` | Tạo GitHub Actions CI workflow |
-| `--docker` | Tạo `Dockerfile` và `docker-compose.yml` |
+| `--ci` | Tạo GitHub Actions CI workflow theo script và lockfile được phát hiện |
+| `--docker` | Tạo `Dockerfile` và `docker-compose.yml` với mặc định phù hợp theo stack |
 | `--env-example` | Tạo `.env.example` từ biến môi trường |
-| `--hooks` | Tạo pre-commit hooks (husky + lint-staged) |
+| `--hooks` | Tạo pre-commit hooks và cập nhật `package.json` cho husky/lint-staged |
 
 ---
 
 ### `readme` — Tạo lại README
 
-Tạo lại README cho một project thư mục có sẵn. Hỗ trợ streaming output, AI đánh giá chất lượng, và bảo toàn các section tùy chỉnh.
+Tạo lại README cho một project thư mục có sẵn. Hỗ trợ streaming output, AI đánh giá chất lượng, lệnh cài đặt/chạy theo đúng package manager, và bảo toàn các section tùy chỉnh.
 
 ```bash
 npx @binxgodteli/claude-ship readme
@@ -237,7 +237,7 @@ npx @binxgodteli/claude-ship changelog --count 50
 
 ### `update` — Re-detect stack và cập nhật README
 
-Scan lại project, phát hiện tech stack, và tạo lại README trong khi bảo toàn các section tùy chỉnh.
+Scan lại project, phát hiện tech stack, làm mới hướng dẫn cài đặt/chạy, và tạo lại README trong khi bảo toàn các section tùy chỉnh.
 
 ```bash
 npx @binxgodteli/claude-ship update
@@ -296,30 +296,32 @@ Mở browser để xác thực OpenAI. Token được lưu tại `~/.claudeship/
 
 ### `batch` — Xử lý hàng loạt
 
-Xử lý nhiều file Claude response từ một thư mục thành các project riêng biệt.
+Tạo cấu trúc cho nhiều file Claude response từ một thư mục thành các project local riêng biệt.
 
 ```bash
 npx @binxgodteli/claude-ship batch ./responses/
-npx @binxgodteli/claude-ship batch ./responses/ --private --ci --docker
+npx @binxgodteli/claude-ship batch ./responses/ --out ./generated --ci --docker
 ```
+
+Hiện tại `batch` chỉ xử lý local: ghi file cho từng project, thêm `.gitignore`, có thể tạo file CI/Docker, và tạo commit local ban đầu. Lệnh này chưa tạo GitHub repo, chưa push lên GitHub, và chưa sinh README bằng AI.
 
 | Flag | Mô tả |
 | :--- | :---- |
 | `<dir>` | Thư mục chứa file `.txt` hoặc `.md` với Claude response |
-| `--token <token>` | GitHub personal access token |
-| `--private` | Tạo repo private |
-| `--no-push` | Chỉ tạo file local, không push lên GitHub |
-| `--provider <name>` | AI provider cho việc tạo README |
-| `--api-key <key>` | API key cho provider đã chọn |
+| `--token <token>` | Dành cho tích hợp GitHub trong tương lai; hiện `batch` chưa dùng |
+| `--private` | Dành cho tính năng tạo repo trong tương lai; hiện chưa dùng |
+| `--no-push` | Nhận để đồng bộ CLI; hiện `batch` vốn chỉ chạy local |
+| `--provider <name>` | Dành cho tạo README bằng AI trong tương lai; hiện chưa dùng |
+| `--api-key <key>` | Dành cho tạo README bằng AI trong tương lai; hiện chưa dùng |
 | `--out <dir>` | Thư mục đầu ra (mặc định: thư mục hiện tại) |
-| `--ci` | Tạo GitHub Actions CI workflow |
-| `--docker` | Tạo Dockerfile và docker-compose.yml |
+| `--ci` | Tạo GitHub Actions CI workflow theo script và lockfile được phát hiện |
+| `--docker` | Tạo `Dockerfile` và `docker-compose.yml` với mặc định phù hợp theo stack |
 
 ---
 
 ### `release` — Bump version + GitHub Release
 
-Bump version trong `package.json`, tạo changelog, tạo git tag, push, và tạo GitHub Release.
+Bump version trong `package.json`, có thể cập nhật `CHANGELOG.md`, tạo commit/tag release, push, và tạo GitHub Release. Commit release chỉ stage các file release.
 
 ```bash
 npx @binxgodteli/claude-ship release

@@ -1,14 +1,13 @@
 import inquirer from "inquirer";
 import { parseClaudeResponse, buildFileTree } from "../parser.js";
-import { detectTechStack, getGitignoreContent } from "../detector.js";
+import { getGitignoreContent } from "../detector.js";
 import { generateReadme, generateReadmeFallback } from "../readme.js";
 import { initAndCommit, addRemoteAndPush } from "../git.js";
 import { createGitHubRepo } from "../github.js";
 import {
   writeFiles, writeFile, readInputFile, getAllFilePaths,
-  checkConflicts, extractReadmeContext, filterFilesForGit,
-  filterFilesForAI, filterFilesForReadme, patchPackageJsonUrls,
-  writeLicenseFile, resolveOutputDir, generateEnvExample,
+  checkConflicts, filterFilesForGit, patchPackageJsonUrls,
+  writeLicenseFile, resolveOutputDir,
 } from "../scaffold.js";
 import { loadConfig, resolveDefaultProvider } from "../config.js";
 import { providerLabel } from "../providers.js";
@@ -19,11 +18,12 @@ import {
 } from "../ui.js";
 import { generateCiWorkflow } from "../ci-generator.js";
 import { generateDockerfile, generateDockerCompose } from "../docker-generator.js";
-import { generateHooksConfig } from "../hooks-generator.js";
+import { generateHooksConfig, applyHooksConfig } from "../hooks-generator.js";
 import {
   resolveTokenAndUsername, validateProvider, resolveFallback,
   printQuality, resolveMaxTokens, resolveDetail, resolveStyle, resolveProviderWithKey,
 } from "../cli-helpers.js";
+import { createParsedProjectAnalysis } from "../project-analysis.js";
 
 export interface ShipOptions {
   file?: string;
@@ -87,7 +87,12 @@ export async function runShip(opts: ShipOptions) {
   );
   printFileTree(buildFileTree(parseResult.files));
 
-  const stack = detectTechStack(parseResult.files);
+  const cfg = loadConfig();
+  const analysis = createParsedProjectAnalysis(parseResult.files, {
+    aiExcludePatterns: cfg.aiExcludePatterns,
+    readmeExcludePatterns: cfg.readmeExcludePatterns,
+  });
+  const stack = analysis.getProjectStack();
   printInfo(`Detected stack: ${c.bold(stack.name)}`);
 
   const answers = await inquirer.prompt([
@@ -128,7 +133,10 @@ export async function runShip(opts: ShipOptions) {
   const isPrivate: boolean = opts.private || answers.isPrivate || false;
   const outputDir = opts.out ?? resolveOutputDir(projectName);
 
-  const readmeContext = extractReadmeContext(parseResult.files);
+  const readmeContext = analysis.getReadmeContext();
+  const pkgMeta = analysis.getPackageMetadata();
+  const runtimePm = pkgMeta.packageManager ?? stack.packageManager;
+  const packageScripts = pkgMeta.scripts ?? {};
 
   if (opts.dryRun) {
     const readmeSnippet = generateReadmeFallback({
@@ -161,7 +169,6 @@ export async function runShip(opts: ShipOptions) {
     if (resolved) { provider = resolved.provider; apiKey = resolved.apiKey; }
   }
 
-  const cfg = loadConfig();
   let earlyUsername = cfg.githubUsername ?? "";
   if (opts.push && !opts.dryRun && !earlyUsername) {
     try {
@@ -224,33 +231,43 @@ export async function runShip(opts: ShipOptions) {
   if (opts.ci) {
     const ciContent = generateCiWorkflow({
       gitignorePreset: stack.gitignorePreset,
-      packageManager: stack.packageManager,
-      hasTests: readmeContext.hasTests,
+      packageManager: runtimePm,
+      hasTests: analysis.hasTests,
+      files: analysis.allPaths,
+      packageScripts,
     });
     writeFile(outputDir, ".github/workflows/ci.yml", ciContent);
   }
   if (opts.docker) {
-    const dockerOpts = { gitignorePreset: stack.gitignorePreset, packageManager: stack.packageManager };
+    const dockerOpts = {
+      gitignorePreset: stack.gitignorePreset,
+      packageManager: runtimePm,
+      files: analysis.allPaths,
+      packageScripts,
+      entryFileName: readmeContext.entryFileName,
+    };
     writeFile(outputDir, "Dockerfile", generateDockerfile(dockerOpts));
     writeFile(outputDir, "docker-compose.yml", generateDockerCompose(dockerOpts));
   }
   if (opts.envExample) {
-    const envContent = generateEnvExample(parseResult.files);
+    const envContent = analysis.getEnvExample();
     if (envContent) writeFile(outputDir, ".env.example", envContent);
   }
   if (opts.hooks) {
-    const hasLint = parseResult.files.some((f) => f.path.includes("eslint") || f.content.includes("eslint"));
-    const hasFormat = parseResult.files.some((f) => f.path.includes("prettier") || f.content.includes("prettier"));
     const hooksResult = generateHooksConfig({
       gitignorePreset: stack.gitignorePreset,
-      packageManager: stack.packageManager,
-      hasLint, hasFormat, hasTypecheck: false,
+      packageManager: runtimePm,
+      hasLint: analysis.hasLintConfig,
+      hasFormat: analysis.hasFormatConfig,
+      hasTypecheck: false,
     });
     if (hooksResult) {
-      writeFile(outputDir, ".husky/pre-commit", hooksResult.huskyPreCommit);
-      if (Object.keys(hooksResult.lintStagedConfig).length > 0) {
-        writeFile(outputDir, ".lintstagedrc.json", JSON.stringify(hooksResult.lintStagedConfig, null, 2) + "\n");
+      const applied = applyHooksConfig(outputDir, hooksResult);
+      for (const warning of applied.warnings) {
+        printWarning(warning);
       }
+    } else {
+      printWarning("Skipping hooks: this project does not have a Node-style package.json workflow.");
     }
   }
   const extras = [opts.ci && "CI", opts.docker && "Docker", opts.hooks && "hooks"].filter(Boolean);
@@ -258,10 +275,7 @@ export async function runShip(opts: ShipOptions) {
 
   const detail = resolveDetail(opts.detail, cfg);
   const isVi = opts.vi || (cfg.defaultVi ?? false);
-  const readmeFiles = filterFilesForReadme(
-    filterFilesForAI(parseResult.files.map((f) => f.path), cfg.aiExcludePatterns),
-    cfg.readmeExcludePatterns
-  );
+  const readmeFiles = analysis.getReadmePaths();
 
   let readmeContent: string;
   if (opts.readme && apiKey) {

@@ -1,14 +1,15 @@
 import fs from "fs";
 import path from "path";
 import { parseClaudeResponse } from "../parser.js";
-import { detectTechStack, getGitignoreContent } from "../detector.js";
+import { getGitignoreContent } from "../detector.js";
 import { initAndCommit } from "../git.js";
 import {
-  writeFiles, writeFile, getAllFilePaths, extractReadmeContext,
+  writeFiles, writeFile, getAllFilePaths,
 } from "../scaffold.js";
 import { printBanner, printSuccess, printError, printWarning, printInfo, c } from "../ui.js";
 import { generateCiWorkflow } from "../ci-generator.js";
 import { generateDockerfile, generateDockerCompose } from "../docker-generator.js";
+import { createParsedProjectAnalysis } from "../project-analysis.js";
 
 export interface BatchOptions {
   token?: string;
@@ -63,21 +64,33 @@ export async function runBatch(inputDir: string, opts: BatchOptions) {
 
       writeFiles(outputDir, parsedFiles);
 
-      const stack = detectTechStack(parsedFiles);
+      const analysis = createParsedProjectAnalysis(parsedFiles);
+      const stack = analysis.getProjectStack();
+      const pkgMeta = analysis.getPackageMetadata();
+      const runtimePm = pkgMeta.packageManager ?? stack.packageManager;
+      const packageScripts = pkgMeta.scripts ?? {};
+      const readmeContext = opts.docker ? analysis.getReadmeContext() : undefined;
       writeFile(outputDir, ".gitignore", getGitignoreContent(stack.gitignorePreset));
 
       if (opts.ci) {
-        const context = extractReadmeContext(parsedFiles);
         const ciContent = generateCiWorkflow({
           gitignorePreset: stack.gitignorePreset,
-          packageManager: stack.packageManager,
-          hasTests: context.hasTests,
+          packageManager: runtimePm,
+          hasTests: analysis.hasTests,
+          files: analysis.allPaths,
+          packageScripts,
         });
         writeFile(outputDir, ".github/workflows/ci.yml", ciContent);
       }
 
       if (opts.docker) {
-        const dockerOpts = { gitignorePreset: stack.gitignorePreset, packageManager: stack.packageManager };
+        const dockerOpts = {
+          gitignorePreset: stack.gitignorePreset,
+          packageManager: runtimePm,
+          files: analysis.allPaths,
+          packageScripts,
+          entryFileName: readmeContext?.entryFileName,
+        };
         writeFile(outputDir, "Dockerfile", generateDockerfile(dockerOpts));
         writeFile(outputDir, "docker-compose.yml", generateDockerCompose(dockerOpts));
       }

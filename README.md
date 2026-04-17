@@ -71,13 +71,13 @@ claude-ship --help
 - **Push existing projects** — no Claude output needed; creates repo if it doesn't exist
 - **Project templates** — `init` command bootstraps new projects from 6 stack templates (Node.js, React, Next.js, Express, FastAPI, CLI Tool)
 - **AI changelog** — `changelog` command generates CHANGELOG.md from git history using AI
-- **Batch processing** — `batch` command processes multiple Claude response files into separate projects
-- **AI commit messages** — `commit` command reads staged `git diff`, generates a conventional commit message, lets you review/edit/regenerate before committing
-- **Release management** — `release` command bumps version, generates changelog, creates git tag, and publishes GitHub Release
-- **Docker generation** — `--docker` flag generates `Dockerfile` and `docker-compose.yml` (multi-stage builds for Node/Python/Rust/Go)
+- **Batch processing** — `batch` command scaffolds multiple Claude response files into separate local projects, with optional CI/Docker generation and an initial git commit for each project
+- **AI commit messages** — `commit` command reads staged changes, generates a conventional commit message, and lets you review/edit/regenerate before committing
+- **Release management** — `release` command bumps version, generates changelog, creates a release tag, and publishes a GitHub Release while only staging release files
+- **Docker generation** — `--docker` flag generates `Dockerfile` and `docker-compose.yml` with stack-aware defaults based on detected scripts, lockfiles, and entry files
 - **`.env.example` generation** — `--env-example` flag detects environment variables and generates a `.env.example` template
-- **Pre-commit hooks** — `--hooks` flag generates husky + lint-staged configuration
-- **GitHub Actions CI** — auto-generate `.github/workflows/ci.yml` via `--ci` flag (Node.js, Python, Rust, Go)
+- **Pre-commit hooks** — `--hooks` flag generates husky + lint-staged files and updates `package.json` scripts/devDependencies when needed
+- **GitHub Actions CI** — auto-generate `.github/workflows/ci.yml` via `--ci`, adapting install/build/test steps to detected scripts and lockfiles
 - **Monorepo support** — detects npm/pnpm/yarn workspaces and includes package info in generated READMEs
 - **Preview & diff** — `readme --preview` to review before writing; `push --diff` to see changes summary before pushing
 - **Dry-run mode** — preview all actions without writing files or calling APIs
@@ -120,10 +120,10 @@ npx @binxgodteli/claude-ship ship --file ./output.txt --name my-project -d
 | `--org <org>` | GitHub organization to create the repo under |
 | `--branch <name>` | Git branch name (default: `main`) |
 | `--no-push` | Scaffold locally, skip GitHub push |
-| `--ci` | Generate GitHub Actions CI workflow |
-| `--docker` | Generate `Dockerfile` and `docker-compose.yml` |
+| `--ci` | Generate a GitHub Actions CI workflow based on detected scripts and lockfiles |
+| `--docker` | Generate `Dockerfile` and `docker-compose.yml` with stack-aware defaults |
 | `--env-example` | Generate `.env.example` from detected env vars |
-| `--hooks` | Generate pre-commit hooks (husky + lint-staged) |
+| `--hooks` | Generate pre-commit hooks and update `package.json` for husky/lint-staged |
 | `-d, --dry-run` | Preview what would happen — no writes, no API calls |
 
 ---
@@ -159,18 +159,18 @@ npx @binxgodteli/claude-ship push --org my-org --private --no-readme
 | `--token <token>` | GitHub personal access token |
 | `--org <org>` | GitHub organization |
 | `--branch <name>` | Branch name (default: `main`) |
-| `--message <msg>` | Git commit message (default: `🚀 Update via claude-ship`) |
+| `--message <msg>` | Git commit message (default: `chore: update via claude-ship`) |
 | `--diff` | Show changes summary and confirm before pushing |
-| `--ci` | Generate GitHub Actions CI workflow |
-| `--docker` | Generate `Dockerfile` and `docker-compose.yml` |
+| `--ci` | Generate a GitHub Actions CI workflow based on detected scripts and lockfiles |
+| `--docker` | Generate `Dockerfile` and `docker-compose.yml` with stack-aware defaults |
 | `--env-example` | Generate `.env.example` from detected env vars |
-| `--hooks` | Generate pre-commit hooks (husky + lint-staged) |
+| `--hooks` | Generate pre-commit hooks and update `package.json` for husky/lint-staged |
 
 ---
 
 ### `readme` — Regenerate README
 
-Regenerate the README for an existing project directory. Supports streaming output, AI quality scoring, and custom section preservation.
+Regenerate the README for an existing project directory. Supports streaming output, AI quality scoring, package-manager-aware install/run commands, and custom section preservation.
 
 ```bash
 npx @binxgodteli/claude-ship readme
@@ -237,7 +237,7 @@ npx @binxgodteli/claude-ship changelog --count 50
 
 ### `update` — Re-detect stack and update README
 
-Re-scans an existing project, detects the tech stack, and regenerates the README while preserving custom sections.
+Re-scans an existing project, detects the tech stack, refreshes install/run guidance, and regenerates the README while preserving custom sections.
 
 ```bash
 npx @binxgodteli/claude-ship update
@@ -296,30 +296,32 @@ Opens your browser for OpenAI authentication. Tokens are saved to `~/.claudeship
 
 ### `batch` — Process multiple files
 
-Process multiple Claude response files from a directory into separate projects.
+Scaffold multiple Claude response files from a directory into separate local projects.
 
 ```bash
 npx @binxgodteli/claude-ship batch ./responses/
-npx @binxgodteli/claude-ship batch ./responses/ --private --ci --docker
+npx @binxgodteli/claude-ship batch ./responses/ --out ./generated --ci --docker
 ```
+
+Current behavior: `batch` writes each project locally, adds `.gitignore`, optionally generates CI/Docker files, and creates an initial local commit. It does not create GitHub repositories, push to GitHub, or generate AI READMEs yet.
 
 | Flag | Description |
 | :--- | :---------- |
 | `<dir>` | Directory containing `.txt` or `.md` files with Claude responses |
-| `--token <token>` | GitHub personal access token |
-| `--private` | Create private repos |
-| `--no-push` | Scaffold locally, skip GitHub push |
-| `--provider <name>` | AI provider for README generation |
-| `--api-key <key>` | API key for the selected provider |
+| `--token <token>` | Accepted for future GitHub integration; currently unused by `batch` |
+| `--private` | Reserved for future repo creation parity; currently unused |
+| `--no-push` | Accepted for CLI parity; `batch` is currently local-only |
+| `--provider <name>` | Reserved for future AI README generation; currently unused |
+| `--api-key <key>` | Reserved for future AI README generation; currently unused |
 | `--out <dir>` | Parent output directory (default: current working directory) |
-| `--ci` | Generate GitHub Actions CI workflow |
-| `--docker` | Generate Dockerfile and docker-compose.yml |
+| `--ci` | Generate a GitHub Actions CI workflow based on detected scripts and lockfiles |
+| `--docker` | Generate `Dockerfile` and `docker-compose.yml` with stack-aware defaults |
 
 ---
 
 ### `release` — Version bump + GitHub Release
 
-Bump version in `package.json`, generate changelog, create git tag, push, and create a GitHub Release.
+Bump the version in `package.json`, optionally update `CHANGELOG.md`, create a release commit/tag, push, and create a GitHub Release. The release commit only stages release files.
 
 ```bash
 npx @binxgodteli/claude-ship release

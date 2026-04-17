@@ -160,6 +160,8 @@ export interface ReadmeContext {
   binName: string;
   /** Key npm scripts, e.g. "dev: tsx src/index.ts | build: tsc" */
   cliScripts: string;
+  /** Raw package.json scripts for generator decisions */
+  packageScripts: Record<string, string>;
   /** Top dependencies with real version strings, e.g. "commander@^12.1.0, chalk@^5.3.0" */
   depsWithVersions: string;
   /** Up to 4 additional representative source files beyond the entry point */
@@ -180,6 +182,7 @@ interface PackageJson {
   name?: string;
   description?: string;
   version?: string;
+  packageManager?: string;
   bin?: Record<string, string> | string;
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
@@ -198,7 +201,9 @@ export function extractReadmeContext(files: ParsedFile[]): ReadmeContext {
   let configSnippet = "";
   let binName = "";
   let cliScripts = "";
+  let packageScripts: Record<string, string> = {};
   let depsWithVersions = "";
+  let packageManagerField = "";
 
   for (const name of CONFIG_PRIORITY) {
     const f = byPath.get(name);
@@ -222,12 +227,15 @@ export function extractReadmeContext(files: ParsedFile[]): ReadmeContext {
 
           // scripts → pick the most useful ones
           if (pkg.scripts) {
+            packageScripts = { ...pkg.scripts };
             const SHOW_SCRIPTS = ["dev", "start", "build", "test", "lint", "preview"];
             const shown = SHOW_SCRIPTS
               .filter((k) => pkg.scripts![k])
               .map((k) => `${k}: ${pkg.scripts![k]}`);
             cliScripts = shown.join(" | ");
           }
+
+          packageManagerField = pkg.packageManager ?? "";
 
           // dependencies with real versions (runtime + dev, to catch TypeScript/ESLint etc.)
           const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
@@ -279,7 +287,12 @@ export function extractReadmeContext(files: ParsedFile[]): ReadmeContext {
   const envVars = detectEnvVars(files);
 
   // Detect package manager from config file
-  const packageManager = resolvePackageManager(configFileName, depsWithVersions);
+  const packageManager = resolvePackageManager(
+    configFileName,
+    packageScripts,
+    files.map((f) => f.path),
+    packageManagerField
+  );
 
   // Detect if project has tests (test files or test script)
   const hasTests =
@@ -288,7 +301,22 @@ export function extractReadmeContext(files: ParsedFile[]): ReadmeContext {
 
   const workspacePackages = detectWorkspaces(files);
 
-  return { configFileName, configSnippet, entryFileName, entrySnippet, binName, cliScripts, depsWithVersions, additionalSnippets, cliCommands, envVars, packageManager, hasTests, workspacePackages };
+  return {
+    configFileName,
+    configSnippet,
+    entryFileName,
+    entrySnippet,
+    binName,
+    cliScripts,
+    packageScripts,
+    depsWithVersions,
+    additionalSnippets,
+    cliCommands,
+    envVars,
+    packageManager,
+    hasTests,
+    workspacePackages,
+  };
 }
 
 // ─── Monorepo / workspace detector ───────────────────────────────────────────
@@ -425,13 +453,29 @@ export function generateEnvExample(files: ParsedFile[]): string | null {
 
 // ─── Package manager resolver ─────────────────────────────────────────────────
 
-function resolvePackageManager(configFileName: string, cliScripts: string): string {
+function resolvePackageManager(
+  configFileName: string,
+  packageScripts: Record<string, string>,
+  filePaths: string[],
+  packageManagerField?: string
+): string {
   if (configFileName === "Cargo.toml") return "cargo";
   if (configFileName === "go.mod") return "go";
   if (configFileName === "pyproject.toml" || configFileName === "requirements.txt") return "pip";
   if (configFileName === "pom.xml" || configFileName === "build.gradle") return "gradle";
-  if (cliScripts.includes("yarn")) return "yarn";
-  if (cliScripts.includes("pnpm")) return "pnpm";
+
+  const normalized = packageManagerField?.trim().toLowerCase() ?? "";
+  if (normalized.startsWith("pnpm")) return "pnpm";
+  if (normalized.startsWith("yarn")) return "yarn";
+  if (normalized.startsWith("npm")) return "npm";
+
+  if (filePaths.includes("pnpm-lock.yaml")) return "pnpm";
+  if (filePaths.includes("yarn.lock")) return "yarn";
+  if (filePaths.includes("package-lock.json") || filePaths.includes("npm-shrinkwrap.json")) return "npm";
+
+  const scriptValues = Object.values(packageScripts).join(" ");
+  if (scriptValues.includes("yarn ")) return "yarn";
+  if (scriptValues.includes("pnpm ")) return "pnpm";
   return "npm";
 }
 

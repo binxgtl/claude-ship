@@ -1,10 +1,59 @@
 import { simpleGit, SimpleGit } from "simple-git";
 
+export interface StagedChangeContext {
+  stagedFiles: string[];
+  diff: string;
+  unstagedCount: number;
+}
+
+export async function getStagedChangeContext(dir: string): Promise<StagedChangeContext> {
+  const git: SimpleGit = simpleGit(dir);
+  const status = await git.status();
+  const stagedSet = new Set(status.staged);
+  const stagedFiles: string[] = [];
+  const seen = new Set<string>();
+
+  const addEntry = (entry: string) => {
+    if (!seen.has(entry)) {
+      seen.add(entry);
+      stagedFiles.push(entry);
+    }
+  };
+
+  for (const file of status.created) {
+    if (stagedSet.has(file)) addEntry(`A  ${file}`);
+  }
+
+  for (const file of status.modified) {
+    if (stagedSet.has(file)) addEntry(`M  ${file}`);
+  }
+
+  for (const file of status.deleted) {
+    if (stagedSet.has(file)) addEntry(`D  ${file}`);
+  }
+
+  for (const rename of status.renamed) {
+    addEntry(`R  ${rename.from} -> ${rename.to}`);
+  }
+
+  for (const file of status.staged) {
+    addEntry(`M  ${file}`);
+  }
+
+  const unstagedModified = status.modified.filter((file) => !stagedSet.has(file)).length;
+  const unstagedCount = unstagedModified + status.not_added.length;
+  const diff = stagedFiles.length > 0
+    ? await git.diff(["--staged"]).catch(() => "")
+    : "";
+
+  return { stagedFiles, diff, unstagedCount };
+}
+
 export async function initAndCommit(
   dir: string,
   files: string[],
-  commitMessage = "🚀 Initial commit via claude-ship"
-): Promise<void> {
+  commitMessage = "chore: initial commit via claude-ship"
+): Promise<boolean> {
   const git: SimpleGit = simpleGit(dir);
 
   const isRepo = await git.checkIsRepo().catch(() => false);
@@ -21,10 +70,13 @@ export async function initAndCommit(
 
   await git.add(files.length > 0 ? files : ["-A"]);
 
-  const status = await git.status();
-  if (status.staged.length > 0 || status.created.length > 0 || status.modified.length > 0 || status.deleted.length > 0 || status.renamed.length > 0) {
+  const stagedNames = await git.diff(["--cached", "--name-only"]).catch(() => "");
+  if (stagedNames.trim()) {
     await git.commit(commitMessage);
+    return true;
   }
+
+  return false;
 }
 
 export async function addRemoteAndPush(

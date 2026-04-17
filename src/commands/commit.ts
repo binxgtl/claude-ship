@@ -1,11 +1,12 @@
-import { simpleGit } from "simple-git";
+import inquirer from "inquirer";
 import fs from "fs";
 import path from "path";
+import { simpleGit } from "simple-git";
 import { resolveDefaultProvider } from "../config.js";
 import { generateText } from "../providers.js";
+import { getStagedChangeContext } from "../git.js";
 import { printBanner, printSuccess, printWarning, printInfo, spinner, c } from "../ui.js";
 import { validateProvider, resolveProviderWithKey } from "../cli-helpers.js";
-import inquirer from "inquirer";
 
 export interface CommitOptions {
   dir: string;
@@ -21,7 +22,7 @@ const COMMIT_PROMPT = `You are a git commit message generator. Analyze the follo
 Rules:
 - Use conventional commits format: type(scope): description
 - Types: feat, fix, refactor, docs, style, test, chore, perf, ci, build
-- Scope is optional — use it only when changes are clearly scoped to one area
+- Scope is optional - use it only when changes are clearly scoped to one area
 - Description should be lowercase, imperative mood, no period at end
 - Keep the first line under 72 characters
 - If changes are substantial, add a blank line then a short body (2-3 bullet points max)
@@ -48,66 +49,32 @@ export async function runCommit(opts: CommitOptions) {
     await git.add("-A");
   }
 
-  const status = await git.status();
-  const staged = [
-    ...status.created.map((f) => `A  ${f}`),
-    ...status.modified.filter((f) => status.staged.includes(f)).map((f) => `M  ${f}`),
-    ...status.deleted.filter((f) => status.staged.includes(f)).map((f) => `D  ${f}`),
-    ...status.renamed.map((r) => `R  ${r.from} → ${r.to}`),
-  ];
-
-  if (status.staged.length === 0 && staged.length === 0) {
-    const unstaged = status.modified.length + status.not_added.length;
-    if (unstaged > 0) {
-      printWarning(`No staged changes. ${unstaged} unstaged file(s) found.`);
+  const stagedContext = await getStagedChangeContext(dir);
+  if (stagedContext.stagedFiles.length === 0) {
+    if (stagedContext.unstagedCount > 0) {
+      printWarning(`No staged changes. ${stagedContext.unstagedCount} unstaged file(s) found.`);
       printInfo("Use --all to stage everything, or stage manually with git add.");
     } else {
-      printInfo("Nothing to commit — working tree clean.");
+      printInfo("Nothing to commit - working tree clean.");
     }
     return;
   }
 
-  const allStaged = status.staged.length > 0
-    ? status.staged.map((f) => {
-        if (status.created.includes(f)) return `A  ${f}`;
-        if (status.deleted.includes(f)) return `D  ${f}`;
-        return `M  ${f}`;
-      })
-    : staged;
-
-  printInfo(`${allStaged.length} staged file(s):`);
-  for (const f of allStaged.slice(0, 15)) {
-    console.log(`  ${c.dim(f)}`);
+  printInfo(`${stagedContext.stagedFiles.length} staged file(s):`);
+  for (const file of stagedContext.stagedFiles.slice(0, 15)) {
+    console.log(`  ${c.dim(file)}`);
   }
-  if (allStaged.length > 15) {
-    console.log(c.dim(`  ... and ${allStaged.length - 15} more`));
+  if (stagedContext.stagedFiles.length > 15) {
+    console.log(c.dim(`  ... and ${stagedContext.stagedFiles.length - 15} more`));
   }
   console.log();
 
-  // Try remote diff first, fall back to local staged diff
-  let diffContent = "";
-  let diffSource = "staged";
-  try {
-    const branch = (await git.branch()).current;
-    await git.fetch(["origin", branch]);
-    diffContent = await git.diff([`origin/${branch}...HEAD`]);
-    if (diffContent) diffSource = `origin/${branch}`;
-  } catch { /* no remote or fetch failed */ }
-
-  if (!diffContent) {
-    diffContent = await git.diff(["--staged"]).catch(() => "");
-  }
-
-  const wasTruncated = diffContent.length > 8000;
+  const wasTruncated = stagedContext.diff.length > 8000;
   const truncatedDiff = wasTruncated
-    ? diffContent.slice(0, 8000) + "\n... (truncated)"
-    : diffContent;
+    ? stagedContext.diff.slice(0, 8000) + "\n... (truncated)"
+    : stagedContext.diff;
   if (wasTruncated) {
-    printWarning(`Diff is large (${(diffContent.length / 1024).toFixed(1)} KB) — truncated to 8 KB for AI context.`);
-  }
-
-  if (diffSource !== "staged") {
-    printInfo(`Comparing against ${c.bold(diffSource)}`);
+    printWarning(`Diff is large (${(stagedContext.diff.length / 1024).toFixed(1)} KB) - truncated to 8 KB for AI context.`);
   }
 
   let provider = validateProvider(opts.provider ?? resolveDefaultProvider());
@@ -119,10 +86,10 @@ export async function runCommit(opts: CommitOptions) {
   const apiKey = resolved.apiKey;
 
   const prompt = COMMIT_PROMPT
-    .replace("{STAGED}", allStaged.join("\n"))
+    .replace("{STAGED}", stagedContext.stagedFiles.join("\n"))
     .replace("{DIFF}", truncatedDiff || "(no diff available)");
 
-  const spinMsg = spinner("Generating commit message…");
+  const spinMsg = spinner("Generating commit message...");
   let message: string;
   try {
     message = await generateText({ provider, apiKey, prompt, maxTokens: 256 });
@@ -172,13 +139,13 @@ export async function runCommit(opts: CommitOptions) {
       ]);
       message = edited.trim();
       if (!message) {
-        printWarning("Empty message — cancelled.");
+        printWarning("Empty message - cancelled.");
         return;
       }
     }
 
     if (action === "regenerate") {
-      const spinRetry = spinner("Regenerating…");
+      const spinRetry = spinner("Regenerating...");
       try {
         message = await generateText({ provider, apiKey, prompt, maxTokens: 256 });
         message = message.trim().replace(/^```\n?/, "").replace(/\n?```$/, "").trim();
@@ -203,20 +170,20 @@ export async function runCommit(opts: CommitOptions) {
     }
   }
 
-  const spinCommit = spinner("Committing…");
+  const spinCommit = spinner("Committing...");
   await git.commit(message);
   spinCommit.succeed("Committed");
 
   if (opts.push) {
-    const spinPush = spinner("Pushing…");
+    const spinPush = spinner("Pushing...");
     try {
       await git.push();
       spinPush.succeed("Pushed to remote");
     } catch (err) {
-      spinPush.warn("Push failed — you may need to push manually");
+      spinPush.warn("Push failed - you may need to push manually");
       printWarning(err instanceof Error ? err.message : String(err));
     }
   }
 
-  printSuccess(`Done!`);
+  printSuccess("Done!");
 }

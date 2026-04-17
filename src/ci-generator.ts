@@ -4,13 +4,13 @@ export interface CiOptions {
   gitignorePreset: GitignorePreset;
   packageManager: string;
   hasTests: boolean;
+  files?: string[];
+  packageScripts?: Record<string, string>;
 }
 
 export function generateCiWorkflow(opts: CiOptions): string {
-  const pm = opts.packageManager;
-
   if (opts.gitignorePreset === "python") {
-    return pythonCi(opts.hasTests);
+    return pythonCi(opts.hasTests, opts.files);
   }
   if (opts.gitignorePreset === "rust") {
     return rustCi(opts.hasTests);
@@ -19,22 +19,84 @@ export function generateCiWorkflow(opts: CiOptions): string {
     return goCi(opts.hasTests);
   }
 
-  return nodeCi(pm, opts.hasTests);
+  return nodeCi(opts.packageManager, opts.packageScripts, opts.files);
 }
 
-function nodeCi(pm: string, hasTests: boolean): string {
-  const install = pm === "yarn" ? "yarn install --frozen-lockfile" :
-    pm === "pnpm" ? "pnpm install --frozen-lockfile" :
-    "npm ci";
+function hasFile(files: string[] | undefined, filePath: string): boolean {
+  return files?.includes(filePath) ?? false;
+}
+
+function detectNodeLockfile(files: string[] | undefined): string | undefined {
+  if (hasFile(files, "pnpm-lock.yaml")) return "pnpm-lock.yaml";
+  if (hasFile(files, "yarn.lock")) return "yarn.lock";
+  if (hasFile(files, "package-lock.json")) return "package-lock.json";
+  if (hasFile(files, "npm-shrinkwrap.json")) return "npm-shrinkwrap.json";
+  return undefined;
+}
+
+function runScript(pm: string, scriptName: string): string {
+  if (pm === "yarn") return `yarn ${scriptName}`;
+  if (pm === "pnpm") return `pnpm run ${scriptName}`;
+  return `npm run ${scriptName}`;
+}
+
+function nodeInstallCommand(pm: string, lockfileName?: string): string {
+  if (pm === "yarn") {
+    return lockfileName === "yarn.lock" ? "yarn install --frozen-lockfile" : "yarn install";
+  }
+  if (pm === "pnpm") {
+    return lockfileName === "pnpm-lock.yaml"
+      ? "corepack enable && pnpm install --frozen-lockfile"
+      : "corepack enable && pnpm install";
+  }
+  if (lockfileName === "package-lock.json" || lockfileName === "npm-shrinkwrap.json") {
+    return "npm ci";
+  }
+  return "npm install";
+}
+
+function nodeCacheBlock(pm: string, lockfileName?: string): string {
+  if (!lockfileName) return "";
+  return `
+          cache: ${pm === "yarn" ? "yarn" : pm === "pnpm" ? "pnpm" : "npm"}
+          cache-dependency-path: ${lockfileName}`;
+}
+
+function nodeCi(
+  pm: string,
+  packageScripts: Record<string, string> | undefined,
+  files: string[] | undefined
+): string {
+  const scripts = packageScripts ?? {};
+  const lockfileName = detectNodeLockfile(files);
+  const install = nodeInstallCommand(pm, lockfileName);
   const setupPnpm = pm === "pnpm" ? `
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: latest` : "";
 
-  const testStep = hasTests ? `
+  const scriptSteps: string[] = [];
+  if (scripts.lint) {
+    scriptSteps.push(`
+      - name: Lint
+        run: ${runScript(pm, "lint")}`);
+  }
+  if (scripts.typecheck) {
+    scriptSteps.push(`
+      - name: Typecheck
+        run: ${runScript(pm, "typecheck")}`);
+  }
+  if (scripts.build) {
+    scriptSteps.push(`
+      - name: Build
+        run: ${runScript(pm, "build")}`);
+  }
+  if (scripts.test) {
+    scriptSteps.push(`
       - name: Test
-        run: ${pm === "yarn" ? "yarn test" : pm === "pnpm" ? "pnpm test" : "npm test"}` : "";
+        run: ${runScript(pm, "test")}`);
+  }
 
   return `name: CI
 
@@ -58,19 +120,21 @@ ${setupPnpm}
       - name: Setup Node.js \${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
-          node-version: \${{ matrix.node-version }}
-          cache: ${pm === "yarn" ? "yarn" : pm === "pnpm" ? "pnpm" : "npm"}
+          node-version: \${{ matrix.node-version }}${nodeCacheBlock(pm, lockfileName)}
 
       - name: Install dependencies
-        run: ${install}
-
-      - name: Build
-        run: ${pm === "yarn" ? "yarn build" : pm === "pnpm" ? "pnpm build" : "npm run build"}
-${testStep}
+        run: ${install}${scriptSteps.join("")}
 `;
 }
 
-function pythonCi(hasTests: boolean): string {
+function pythonCi(hasTests: boolean, files?: string[]): string {
+  let installCommands = `python -m pip install --upgrade pip`;
+  if (hasFile(files, "requirements.txt")) {
+    installCommands += `\n          pip install -r requirements.txt`;
+  } else if (hasFile(files, "pyproject.toml")) {
+    installCommands += `\n          pip install .`;
+  }
+
   const testStep = hasTests ? `
       - name: Test
         run: pytest` : "";
@@ -101,8 +165,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          ${installCommands}
 ${testStep}
 `;
 }
